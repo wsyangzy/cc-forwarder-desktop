@@ -235,33 +235,31 @@ func (s *EndpointService) ImportFromYAML(ctx context.Context, endpoints []config
 }
 
 // SyncFromDatabase 从数据库同步端点到管理器
-// v5.0: 加载所有端点（包括 enabled=false 的）参与健康检查
-// 并同步 enabled=true 的端点到组激活状态
+// v5.0 Desktop: 加载所有端点参与健康检查，并同步 enabled=true 的端点到组激活状态
 func (s *EndpointService) SyncFromDatabase(ctx context.Context) error {
-	// v5.0: 获取所有端点（包括 enabled=false 的）
+	// 获取所有端点（包括 enabled=false 的）
 	records, err := s.store.List(ctx)
 	if err != nil {
 		return fmt.Errorf("获取端点列表失败: %w", err)
 	}
 
-	slog.Info(fmt.Sprintf("🔄 [EndpointService] 从数据库同步 %d 个端点 (包括未激活)", len(records)))
+	slog.Info(fmt.Sprintf("🔄 [EndpointService] 从数据库同步 %d 个端点", len(records)))
 
 	// 转换为配置数组
 	endpoints := make([]config.EndpointConfig, len(records))
 	var enabledEndpointName string
 	for i, record := range records {
 		endpoints[i] = s.recordToConfig(record)
-		// 记录 enabled=true 的端点（应该只有一个）
+		// 记录 enabled=true 的端点
 		if record.Enabled {
 			enabledEndpointName = record.Name
 		}
 	}
 
-	// 更新配置并重新初始化管理器
-	s.config.Endpoints = endpoints
-	s.manager.UpdateConfig(s.config)
+	// 使用专门的同步方法（不走 UpdateConfig）
+	s.manager.SyncEndpoints(endpoints)
 
-	// v5.0: 同步 enabled=true 的端点到组激活状态
+	// 同步 enabled=true 的端点到组激活状态
 	if enabledEndpointName != "" {
 		if err := s.manager.ManualActivateGroup(enabledEndpointName); err != nil {
 			slog.Warn(fmt.Sprintf("⚠️ [EndpointService] 激活组失败: %s - %v", enabledEndpointName, err))

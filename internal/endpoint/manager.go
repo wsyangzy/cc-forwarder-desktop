@@ -121,31 +121,14 @@ func (m *Manager) Stop() {
 	m.wg.Wait()
 }
 
-// UpdateConfig updates the manager configuration and recreates endpoints
+// UpdateConfig updates the manager configuration (hot-reload)
+// v5.0 Desktop: 只更新配置参数，不重建端点（端点完全由数据库管理）
 func (m *Manager) UpdateConfig(cfg *config.Config) {
 	m.config = cfg
 
-	// Recreate endpoints with new configuration
-	endpoints := make([]*Endpoint, len(cfg.Endpoints))
-	for i, epCfg := range cfg.Endpoints {
-		endpoints[i] = &Endpoint{
-			Config: epCfg,
-			Status: EndpointStatus{
-				Healthy:      false, // Start pessimistic, let health checks determine actual status
-				LastCheck:    time.Now(),
-				NeverChecked: true,  // 标记为未检测
-			},
-		}
-	}
-
-	// v5.0+: 使用写锁保护 endpoints 切片更新
-	m.endpointsMu.Lock()
-	m.endpoints = endpoints
-	m.endpointsMu.Unlock()
-
-	// Update group manager with new config and endpoints
+	// 只更新 GroupManager 配置
 	m.groupManager.UpdateConfig(cfg)
-	m.groupManager.UpdateGroups(endpoints)
+	slog.Debug("🔄 [热更新] 更新配置参数完成，端点保持不变")
 	
 	// Update fast tester with new config
 	if m.fastTester != nil {
@@ -1266,6 +1249,44 @@ func maskKey(key string) string {
 }
 
 // ==================== v5.0+ 动态端点管理功能 ====================
+
+// SyncEndpoints 从数据库同步端点（v5.0 Desktop 专用）
+// 用于启动时从数据库加载端点，替换现有端点列表
+func (m *Manager) SyncEndpoints(configs []config.EndpointConfig) {
+	// 创建新端点列表
+	endpoints := make([]*Endpoint, len(configs))
+	for i, cfg := range configs {
+		endpoints[i] = &Endpoint{
+			Config: cfg,
+			Status: EndpointStatus{
+				Healthy:      false,
+				LastCheck:    time.Now(),
+				NeverChecked: true,
+			},
+		}
+
+		// 初始化 Key 管理状态
+		tokenCount := len(cfg.Tokens)
+		if tokenCount == 0 && cfg.Token != "" {
+			tokenCount = 1
+		}
+		apiKeyCount := len(cfg.ApiKeys)
+		if apiKeyCount == 0 && cfg.ApiKey != "" {
+			apiKeyCount = 1
+		}
+		m.keyManager.InitEndpoint(cfg.Name, tokenCount, apiKeyCount)
+	}
+
+	// 使用写锁替换端点列表
+	m.endpointsMu.Lock()
+	m.endpoints = endpoints
+	m.endpointsMu.Unlock()
+
+	// 更新 GroupManager（创建组）
+	m.groupManager.UpdateGroups(endpoints)
+
+	slog.Info(fmt.Sprintf("🔄 [端点同步] 已同步 %d 个端点到管理器", len(configs)))
+}
 
 // AddEndpoint 动态添加端点（v5.0+ 新增）
 // 线程安全地将新端点添加到管理器中
