@@ -350,148 +350,94 @@ func (sp *StreamProcessor) handlePartialStream(err error) error {
 	return err
 }
 
-// ProcessStreamWithRetry 支持网络中断恢复的流式处理（增强版本）
-// 在网络不稳定环境下提供智能重试机制
+// ProcessStreamWithRetry 流式处理入口（无重试版本）
+// 2025-12-11: 移除无效的重试循环，流式传输阶段不重试以避免重复计费
+// 原因：resp.Body 在 ProcessStream 返回后会被关闭，重试无法重新读取
 // 返回值：(finalTokenUsage *tracking.TokenUsage, modelName string, err error)
-// 修改为返回 Token 使用信息和模型名称而非直接记录到 usageTracker
 func (sp *StreamProcessor) ProcessStreamWithRetry(ctx context.Context, resp *http.Response) (*tracking.TokenUsage, string, error) {
-	const maxRetries = 3
+	// 执行流式处理（单次调用，不重试）
+	finalTokenUsage, err := sp.ProcessStream(ctx, resp)
 
-	for attempt := 0; attempt <= maxRetries; attempt++ {
-		// 分类当前尝试的错误上下文
-		var lastErr error
-
-		if attempt > 0 {
-			// 使用错误恢复管理器计算重试延迟
-			errorCtx := sp.errorRecovery.ClassifyError(lastErr, sp.requestID, sp.endpoint, "", attempt)
-
-			// 检查是否应该重试
-			if !sp.errorRecovery.ShouldRetry(errorCtx) {
-				slog.Info(fmt.Sprintf("🛑 [重试停止] [%s] 错误恢复管理器建议停止重试", sp.requestID))
-				sp.errorRecovery.HandleFinalFailure(errorCtx)
-				return nil, "", lastErr
-			}
-
-			// 执行重试延迟
-			if retryErr := sp.errorRecovery.ExecuteRetry(ctx, errorCtx); retryErr != nil {
-				return nil, "", retryErr
-			}
-		}
-
-		// 尝试流式处理
-		finalTokenUsage, err := sp.ProcessStream(ctx, resp)
-
-		if err == nil {
-			// ✅ 检查是否在处理过程中遇到了API错误
-			if sp.lastAPIError != nil {
-				// ✅ 流式处理成功，但遇到了API错误（如SSE错误事件）
-				// 保留已解析的Token信息而不是丢弃
-				modelName := sp.tokenParser.GetModelName()
-				if modelName == "" {
-					modelName = "unknown"
-				}
-
-				// ✅ 智能错误包装：检查API错误是否已被包装，避免重复包装
-				if strings.HasPrefix(sp.lastAPIError.Error(), "stream_status:") {
-					// 已经是包装后的错误，直接返回，保持原始状态信息
-					return finalTokenUsage, modelName, sp.lastAPIError
-				} else {
-					// 原始API错误，进行包装以确保状态传递
-					// ✅ 根据API错误内容智能确定状态，而非硬编码
-					status := "stream_error" // 默认流错误状态
-					errorMsg := sp.lastAPIError.Error()
-					if strings.Contains(errorMsg, "rate") || strings.Contains(errorMsg, "429") {
-						status = "rate_limited"
-					} else if strings.Contains(errorMsg, "timeout") || strings.Contains(errorMsg, "deadline") {
-						status = "timeout"
-					} else if strings.Contains(errorMsg, "cancel") {
-						status = "cancelled"
-					} else if strings.Contains(errorMsg, "auth") || strings.Contains(errorMsg, "401") {
-						status = "auth_error"
-					}
-
-					wrappedErr := fmt.Errorf("stream_status:%s:model:%s: %w", status, modelName, sp.lastAPIError)
-					return finalTokenUsage, modelName, wrappedErr
-				}
-			}
-
-			// 处理成功，获取模型名称
+	if err == nil {
+		// ✅ 检查是否在处理过程中遇到了API错误（如SSE错误事件）
+		if sp.lastAPIError != nil {
 			modelName := sp.tokenParser.GetModelName()
 			if modelName == "" {
-				modelName = "default"
+				modelName = "unknown"
 			}
 
-			if attempt > 0 {
-				slog.Info(fmt.Sprintf("✅ [重试成功] [%s] 第 %d 次重试成功", sp.requestID, attempt))
+			// 智能错误包装：检查API错误是否已被包装，避免重复包装
+			if strings.HasPrefix(sp.lastAPIError.Error(), "stream_status:") {
+				return finalTokenUsage, modelName, sp.lastAPIError
 			}
-			return finalTokenUsage, modelName, nil
-		}
 
-		lastErr = err
-
-		// 简化的重试判断逻辑，避免重复错误分类
-		// 对于流式处理，我们主要关注网络相关的错误是否可重试
-		shouldRetry := false
-		if err != nil {
-			errStr := strings.ToLower(err.Error())
-			// 简单判断是否为可重试的网络/超时错误
-			if strings.Contains(errStr, "timeout") ||
-				strings.Contains(errStr, "connection") ||
-				strings.Contains(errStr, "network") ||
-				strings.Contains(errStr, "reset") ||
-				strings.Contains(errStr, "refused") {
-				shouldRetry = true
+			// 根据API错误内容智能确定状态
+			status := "stream_error"
+			errorMsg := sp.lastAPIError.Error()
+			if strings.Contains(errorMsg, "rate") || strings.Contains(errorMsg, "429") {
+				status = "rate_limited"
+			} else if strings.Contains(errorMsg, "timeout") || strings.Contains(errorMsg, "deadline") {
+				status = "timeout"
+			} else if strings.Contains(errorMsg, "cancel") {
+				status = "cancelled"
+			} else if strings.Contains(errorMsg, "auth") || strings.Contains(errorMsg, "401") {
+				status = "auth_error"
 			}
+
+			wrappedErr := fmt.Errorf("stream_status:%s:model:%s: %w", status, modelName, sp.lastAPIError)
+			return finalTokenUsage, modelName, wrappedErr
 		}
 
-		if shouldRetry && attempt < maxRetries {
-			slog.Warn(fmt.Sprintf("🔄 [网络错误重试] [%s] 网络相关错误将重试: %v", sp.requestID, err))
-			continue
-		}
-
-		// 不可重试错误或重试次数已满，保留错误包装器，确保状态传递，避免重复包装
-		slog.Info(fmt.Sprintf("🛑 [重试停止] [%s] %d 次重试后停止，错误将由上层处理: %v",
-			sp.requestID, attempt, err))
-
-		// ✅ 获取已解析的Token信息（但不强制返回空结构体）
-		tokenUsage := sp.getFinalTokenUsage()
+		// 🆕 [流完整性检测] 2025-12-11
+		// 检查流是否完整，即使 err == nil 也可能是不完整的流
+		completeness := sp.tokenParser.GetStreamCompleteness()
 		modelName := sp.tokenParser.GetModelName()
 		if modelName == "" {
-			modelName = "unknown"
+			modelName = "default"
 		}
 
-		// ✅ 智能错误包装：检查错误是否已被包装，避免重复包装
-		if strings.HasPrefix(err.Error(), "stream_status:") {
-			// 已经是包装后的错误，直接返回，保持错误链完整性
-			return tokenUsage, modelName, err
-		} else {
-			// 原始错误，进行包装以确保状态传递
-			// ✅ 根据错误内容智能确定状态，而非硬编码为"error"
-			status := "error" // 默认状态
-			if strings.Contains(err.Error(), "timeout") || strings.Contains(err.Error(), "deadline") {
-				status = "timeout"
-			} else if strings.Contains(err.Error(), "cancel") {
-				status = "cancelled"
-			} else if strings.Contains(err.Error(), "network") || strings.Contains(err.Error(), "connection") {
-				status = "network_error"
+		if !completeness.IsComplete {
+			// 流不完整，返回结构化错误让上层设置 failure_reason
+			slog.Warn(fmt.Sprintf("⚠️ [流不完整] [%s] %s", sp.requestID, completeness.Reason))
+
+			// 🔧 [结构化错误] 2025-12-11: 使用 StreamIncompleteError 替代字符串格式
+			streamErr := &StreamIncompleteError{
+				FailureReason: completeness.FailureReason,
+				ModelName:     modelName,
+				Reason:        completeness.Reason,
 			}
-
-			wrappedErr := fmt.Errorf("stream_status:%s:model:%s: %w", status, modelName, err)
-			return tokenUsage, modelName, wrappedErr
+			return finalTokenUsage, modelName, streamErr
 		}
+
+		// 处理成功且流完整
+		return finalTokenUsage, modelName, nil
 	}
 
-	// 创建最终失败的错误上下文
-	finalErrorCtx := &ErrorContext{
-		RequestID:     sp.requestID,
-		EndpointName:  sp.endpoint,
-		AttemptCount:  maxRetries,
-		ErrorType:     ErrorTypeUnknown,
-		OriginalError: fmt.Errorf("stream processing failed after %d retries", maxRetries),
+	// 流式处理失败，进行错误包装
+	tokenUsage := sp.getFinalTokenUsage()
+	modelName := sp.tokenParser.GetModelName()
+	if modelName == "" {
+		modelName = "unknown"
 	}
-	sp.errorRecovery.HandleFinalFailure(finalErrorCtx)
 
-	return nil, "", fmt.Errorf("stream processing failed after %d retries", maxRetries)
+	// 智能错误包装：检查错误是否已被包装，避免重复包装
+	if strings.HasPrefix(err.Error(), "stream_status:") {
+		return tokenUsage, modelName, err
+	}
+
+	// 根据错误内容智能确定状态
+	status := "error"
+	errStr := err.Error()
+	if strings.Contains(errStr, "timeout") || strings.Contains(errStr, "deadline") {
+		status = "timeout"
+	} else if strings.Contains(errStr, "cancel") {
+		status = "cancelled"
+	} else if strings.Contains(errStr, "network") || strings.Contains(errStr, "connection") {
+		status = "network_error"
+	}
+
+	wrappedErr := fmt.Errorf("stream_status:%s:model:%s: %w", status, modelName, err)
+	return tokenUsage, modelName, wrappedErr
 }
 
 // waitForBackgroundParsing 等待所有后台解析完成

@@ -47,6 +47,8 @@ type RequestLifecycleManager interface {
 	PrepareErrorContext(errorCtx *ErrorContext)
 	// 新增方法：统一的请求完成入口
 	CompleteRequest(tokens *tracking.TokenUsage)
+	// 🆕 [流完整性追踪] 2025-12-11: 带数据质量标记的请求完成
+	CompleteRequestWithQuality(tokens *tracking.TokenUsage, failureReason string)
 	HandleNonTokenResponse(responseContent string)
 	// 失败请求Token记录方法：只记录Token统计，不改变请求状态
 	RecordTokensForFailedRequest(tokens *tracking.TokenUsage, failureReason string)
@@ -98,6 +100,16 @@ const (
 	ErrorTypeClientCancel                       // 12: 客户端取消错误
 	ErrorTypeNoHealthyEndpoints                 // 13: 没有健康端点可用
 )
+
+// StreamIncompleteErrorInterface 流不完整错误接口
+// 🆕 [流完整性追踪] 2025-12-11
+// 用于跨包检查流不完整错误，避免循环导入
+type StreamIncompleteErrorInterface interface {
+	error
+	GetFailureReason() string // 获取 failure_reason（incomplete_stream 或 stream_truncated）
+	GetModelName() string     // 获取模型名称
+	GetReason() string        // 获取不完整的原因（用于日志）
+}
 
 // TokenParser Token解析器接口
 type TokenParser interface {

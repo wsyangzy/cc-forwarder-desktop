@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -121,6 +122,11 @@ type TokenParser struct {
 	finalUsage *tracking.TokenUsage
 	// 用于处理中断的部分使用量
 	partialUsage *tracking.TokenUsage
+
+	// 🆕 [流完整性追踪] 2025-12-11
+	hasMessageStart      bool // 是否收到 message_start 事件
+	hasMessageDeltaUsage bool // 是否收到带 usage 的 message_delta 事件
+	hasMessageStop       bool // 是否收到 message_stop 事件
 }
 
 // fixMalformedEventType 修复格式错误的事件类型
@@ -186,8 +192,14 @@ func (tp *TokenParser) ParseSSELineV2(line string) *ParseResult {
 		eventType = tp.fixMalformedEventType(eventType)
 
 		tp.currentEvent = eventType
+
+		// 🆕 [流完整性追踪] 检测 message_stop 事件
+		if eventType == "message_stop" {
+			tp.hasMessageStop = true
+		}
+
 		// 为message_start（模型信息）、message_delta（使用量）和error事件收集数据
-		tp.collectingData = (eventType == "message_delta" || eventType == "message_start" || eventType == "error")
+		tp.collectingData = eventType == "message_delta" || eventType == "message_start" || eventType == "error"
 		tp.eventBuffer.Reset()
 		return nil
 	}
@@ -206,14 +218,15 @@ func (tp *TokenParser) ParseSSELineV2(line string) *ParseResult {
 
 	// 处理表示SSE事件结束的空行
 	if line == "" && tp.collectingData && tp.eventBuffer.Len() > 0 {
-		if tp.currentEvent == "message_start" {
+		switch tp.currentEvent {
+		case "message_start":
 			// 仅解析message_start以获取模型信息（不需要ParseResult）
 			tp.parseMessageStart()
 			return nil
-		} else if tp.currentEvent == "message_delta" {
+		case "message_delta":
 			// 使用新的V2方法解析message_delta
 			return tp.parseMessageDeltaV2()
-		} else if tp.currentEvent == "error" {
+		case "error":
 			// 使用新的V2方法解析error事件
 			return tp.parseErrorEventV2()
 		}
@@ -240,7 +253,7 @@ func (tp *TokenParser) ParseSSELine(line string) *monitor.TokenUsage {
 
 		tp.currentEvent = eventType
 		// 为message_start（模型信息）、message_delta（使用量）和error事件收集数据
-		tp.collectingData = (eventType == "message_delta" || eventType == "message_start" || eventType == "error")
+		tp.collectingData = eventType == "message_delta" || eventType == "message_start" || eventType == "error"
 		tp.eventBuffer.Reset()
 		return nil
 	}
@@ -259,13 +272,14 @@ func (tp *TokenParser) ParseSSELine(line string) *monitor.TokenUsage {
 
 	// 处理表示SSE事件结束的空行
 	if line == "" && tp.collectingData && tp.eventBuffer.Len() > 0 {
-		if tp.currentEvent == "message_start" {
+		switch tp.currentEvent {
+		case "message_start":
 			// 解析message_start以获取模型信息和token使用量
 			return tp.parseMessageStart()
-		} else if tp.currentEvent == "message_delta" {
+		case "message_delta":
 			// 解析message_delta以获取使用信息
 			return tp.parseMessageDelta()
-		} else if tp.currentEvent == "error" {
+		case "error":
 			// 解析error事件并记录为API错误
 			// 🚫 修复：注释掉违规的直接usageTracker调用，让生命周期管理器处理
 			// tp.parseErrorEvent()
@@ -284,6 +298,9 @@ func (tp *TokenParser) parseMessageStart() *monitor.TokenUsage {
 		tp.collectingData = false
 		tp.currentEvent = ""
 	}()
+
+	// 🆕 [流完整性追踪] 标记收到 message_start 事件
+	tp.hasMessageStart = true
 
 	jsonData := tp.eventBuffer.String()
 	if jsonData == "" {
@@ -389,6 +406,9 @@ func (tp *TokenParser) parseMessageDeltaV2() *ParseResult {
 		}
 		return nil
 	}
+
+	// 🆕 [流完整性追踪] 标记收到带 usage 的 message_delta 事件
+	tp.hasMessageDeltaUsage = true
 
 	// 🚀 [智能合并] 实现message_start和message_delta的token信息智能合并
 	// 策略：
@@ -579,6 +599,10 @@ func (tp *TokenParser) Reset() {
 	tp.finalUsage = nil
 	tp.partialUsage = nil
 	tp.startTime = time.Now()
+	// 🆕 [流完整性追踪] 重置完整性追踪字段
+	tp.hasMessageStart = false
+	tp.hasMessageDeltaUsage = false
+	tp.hasMessageStop = false
 }
 
 // parseErrorEventV2 新版本的错误事件解析方法
@@ -808,6 +832,110 @@ func (tp *TokenParser) GetModelName() string {
 // 返回true表示使用了message_start的数据而不是完整的message_delta数据
 func (tp *TokenParser) IsFallbackUsed() bool {
 	return tp.finalUsage == nil && tp.partialUsage != nil
+}
+
+// StreamCompleteness 流完整性状态
+// 🆕 [流完整性追踪] 2025-12-11
+type StreamCompleteness struct {
+	IsComplete    bool   // 是否完整
+	Reason        string // 不完整的原因（用于日志）
+	FailureReason string // 数据库 failure_reason 值
+}
+
+// StreamIncompleteError 流不完整错误（结构化错误类型）
+// 🆕 [流完整性追踪] 2025-12-11
+// 用于替代字符串解析，提供类型安全的错误传递
+type StreamIncompleteError struct {
+	FailureReason string // 数据库 failure_reason 值（incomplete_stream 或 stream_truncated）
+	ModelName     string // 模型名称
+	Reason        string // 不完整的原因（用于日志）
+}
+
+// Error 实现 error 接口
+func (e *StreamIncompleteError) Error() string {
+	return fmt.Sprintf("stream incomplete: %s (model: %s)", e.Reason, e.ModelName)
+}
+
+// GetFailureReason 获取 failure_reason（实现 StreamIncompleteErrorInterface）
+func (e *StreamIncompleteError) GetFailureReason() string {
+	return e.FailureReason
+}
+
+// GetModelName 获取模型名称（实现 StreamIncompleteErrorInterface）
+func (e *StreamIncompleteError) GetModelName() string {
+	return e.ModelName
+}
+
+// GetReason 获取不完整的原因（实现 StreamIncompleteErrorInterface）
+func (e *StreamIncompleteError) GetReason() string {
+	return e.Reason
+}
+
+// IsStreamIncompleteError 检查错误是否为 StreamIncompleteError
+func IsStreamIncompleteError(err error) (*StreamIncompleteError, bool) {
+	var streamErr *StreamIncompleteError
+	if errors.As(err, &streamErr) {
+		return streamErr, true
+	}
+	return nil, false
+}
+
+// GetStreamCompleteness 获取流完整性状态
+// 🆕 [流完整性追踪] 2025-12-11
+// 根据接收到的 SSE 事件判断流是否完整：
+// - 完整流：收到 message_start + message_delta(usage) + message_stop
+// - 不完整流：缺少 message_start、message_stop 或 message_delta(usage)
+func (tp *TokenParser) GetStreamCompleteness() StreamCompleteness {
+	// 🔧 [边界条件修复] 2025-12-11
+	// 首先检查是否收到 message_start，这是所有有效响应的起点
+	if !tp.hasMessageStart {
+		return StreamCompleteness{
+			IsComplete:    false,
+			Reason:        "未收到 message_start 事件",
+			FailureReason: "stream_truncated",
+		}
+	}
+
+	// 检查是否收到必要的结束事件
+	if !tp.hasMessageStop {
+		// 没有 message_stop，判断是缺少结束事件还是内容截断
+		if tp.hasMessageDeltaUsage {
+			// 有 usage 但没有 stop，可能是轻微不完整
+			return StreamCompleteness{
+				IsComplete:    false,
+				Reason:        "缺少 message_stop 事件",
+				FailureReason: "incomplete_stream",
+			}
+		}
+		// 只有 start，响应被截断
+		return StreamCompleteness{
+			IsComplete:    false,
+			Reason:        "响应被截断，缺少 message_delta 和 message_stop",
+			FailureReason: "stream_truncated",
+		}
+	}
+
+	// 检查是否有完整的 usage 信息
+	if !tp.hasMessageDeltaUsage && tp.IsFallbackUsed() {
+		return StreamCompleteness{
+			IsComplete:    false,
+			Reason:        "使用了 message_start fallback，缺少最终 usage",
+			FailureReason: "incomplete_stream",
+		}
+	}
+
+	// 流完整
+	return StreamCompleteness{
+		IsComplete:    true,
+		Reason:        "",
+		FailureReason: "",
+	}
+}
+
+// IsStreamComplete 简单判断流是否完整
+// 🆕 [流完整性追踪] 2025-12-11
+func (tp *TokenParser) IsStreamComplete() bool {
+	return tp.GetStreamCompleteness().IsComplete
 }
 
 // GetPartialUsage 获取部分Token使用统计（用于网络中断恢复）

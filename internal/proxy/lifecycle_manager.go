@@ -304,6 +304,26 @@ func (rlm *RequestLifecycleManager) CompleteRequest(tokens *tracking.TokenUsage)
 	rlm.notifyStatusChange("completed", rlm.retryCount, 200)
 }
 
+// CompleteRequestWithQuality 完成请求并标记数据质量问题
+// 🆕 [流完整性追踪] 2025-12-11
+// 用于处理流不完整但已完成的请求，记录 failure_reason 以标记数据质量问题
+// 参数:
+//   - tokens: Token使用统计
+//   - failureReason: 数据质量问题标识（如 "incomplete_stream", "stream_truncated"）
+func (rlm *RequestLifecycleManager) CompleteRequestWithQuality(tokens *tracking.TokenUsage, failureReason string) {
+	// 先执行正常的完成流程
+	rlm.CompleteRequest(tokens)
+
+	// 如果有质量问题，更新 failure_reason
+	if failureReason != "" && rlm.usageTracker != nil && rlm.requestID != "" {
+		opts := tracking.UpdateOptions{
+			FailureReason: &failureReason,
+		}
+		rlm.usageTracker.RecordRequestUpdate(rlm.requestID, opts)
+		slog.Warn(fmt.Sprintf("⚠️ [数据质量标记] [%s] failure_reason=%s", rlm.requestID, failureReason))
+	}
+}
+
 // HandleNonTokenResponse 处理非Token响应的Fallback机制
 // 用于处理不包含Token信息的响应（如健康检查、配置查询等）
 func (rlm *RequestLifecycleManager) HandleNonTokenResponse(responseContent string) {

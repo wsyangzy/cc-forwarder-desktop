@@ -4,6 +4,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"cc-forwarder/internal/tracking"
 )
 
 func TestRequestLifecycleManager_NewRequestLifecycleManager(t *testing.T) {
@@ -343,4 +345,84 @@ func TestRequestLifecycleManager_AttemptCounterIndependentOfRetryCount(t *testin
 	if sameRetryCount != 5 {
 		t.Errorf("Expected retry count unchanged (5), got %d", sameRetryCount)
 	}
+}
+
+// ===== CompleteRequestWithQuality 测试 =====
+// 2025-12-11: 测试流完整性检测后的数据质量标记功能
+
+func TestRequestLifecycleManager_CompleteRequestWithQuality_NoFailure(t *testing.T) {
+	// 测试正常完成（无质量问题）
+	requestID := "test-quality-ok-1"
+	rlm := NewRequestLifecycleManager(nil, nil, requestID, nil)
+	rlm.SetEndpoint("test-endpoint", "test-group", "test-channel")
+	rlm.SetModel("claude-sonnet-4-20250514")
+
+	// 调用带空 failureReason 的完成方法
+	rlm.CompleteRequestWithQuality(nil, "")
+
+	// 验证状态为 completed
+	if rlm.GetLastStatus() != "completed" {
+		t.Errorf("期望状态 'completed'，但得到: %s", rlm.GetLastStatus())
+	}
+
+	t.Log("✅ 正常完成测试通过")
+}
+
+func TestRequestLifecycleManager_CompleteRequestWithQuality_IncompleteStream(t *testing.T) {
+	// 测试不完整流的标记
+	requestID := "test-quality-incomplete-2"
+	rlm := NewRequestLifecycleManager(nil, nil, requestID, nil)
+	rlm.SetEndpoint("test-endpoint", "test-group", "test-channel")
+	rlm.SetModel("claude-sonnet-4-20250514")
+
+	// 调用带 incomplete_stream failureReason 的完成方法
+	rlm.CompleteRequestWithQuality(nil, "incomplete_stream")
+
+	// 验证状态为 completed（不是 failed）
+	if rlm.GetLastStatus() != "completed" {
+		t.Errorf("期望状态 'completed'，但得到: %s", rlm.GetLastStatus())
+	}
+
+	t.Log("✅ incomplete_stream 标记测试通过")
+}
+
+func TestRequestLifecycleManager_CompleteRequestWithQuality_StreamTruncated(t *testing.T) {
+	// 测试流截断的标记
+	requestID := "test-quality-truncated-3"
+	rlm := NewRequestLifecycleManager(nil, nil, requestID, nil)
+	rlm.SetEndpoint("test-endpoint", "test-group", "test-channel")
+	rlm.SetModel("claude-sonnet-4-20250514")
+
+	// 调用带 stream_truncated failureReason 的完成方法
+	rlm.CompleteRequestWithQuality(nil, "stream_truncated")
+
+	// 验证状态为 completed
+	if rlm.GetLastStatus() != "completed" {
+		t.Errorf("期望状态 'completed'，但得到: %s", rlm.GetLastStatus())
+	}
+
+	t.Log("✅ stream_truncated 标记测试通过")
+}
+
+func TestRequestLifecycleManager_CompleteRequestWithQuality_WithTokens(t *testing.T) {
+	// 测试带 Token 信息的质量标记
+	requestID := "test-quality-tokens-4"
+	rlm := NewRequestLifecycleManager(nil, nil, requestID, nil)
+	rlm.SetEndpoint("test-endpoint", "test-group", "test-channel")
+	rlm.SetModel("claude-sonnet-4-20250514")
+
+	tokens := &tracking.TokenUsage{
+		InputTokens:  100,
+		OutputTokens: 50,
+	}
+
+	// 调用带 Token 和 failureReason 的完成方法
+	rlm.CompleteRequestWithQuality(tokens, "incomplete_stream")
+
+	// 验证状态为 completed
+	if rlm.GetLastStatus() != "completed" {
+		t.Errorf("期望状态 'completed'，但得到: %s", rlm.GetLastStatus())
+	}
+
+	t.Log("✅ 带 Token 的质量标记测试通过")
 }

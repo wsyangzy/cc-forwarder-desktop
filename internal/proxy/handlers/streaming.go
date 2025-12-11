@@ -221,6 +221,28 @@ func (sh *StreamingHandler) executeStreamingWithRetry(ctx context.Context, w htt
 				// 执行流式处理并获取Token信息和模型名称
 				finalTokenUsage, modelName, err := processor.ProcessStreamWithRetry(ctx, resp)
 				if err != nil {
+					// 🔧 [结构化错误处理] 2025-12-11: 优先使用接口断言处理流不完整错误
+					if streamErr, ok := err.(StreamIncompleteErrorInterface); ok {
+						// 流不完整但请求已完成，需要标记 failure_reason
+						parsedModelName := streamErr.GetModelName()
+						failureReason := streamErr.GetFailureReason()
+
+						// 设置模型信息
+						if parsedModelName != "unknown" && parsedModelName != "" {
+							lifecycleManager.SetModelWithComparison(parsedModelName, "stream_incomplete")
+						} else if modelName != "unknown" && modelName != "" {
+							lifecycleManager.SetModelWithComparison(modelName, "stream_processor")
+						}
+
+						// 使用 CompleteRequestWithQuality 完成请求并标记数据质量问题
+						lifecycleManager.CompleteRequestWithQuality(finalTokenUsage, failureReason)
+
+						slog.Info(fmt.Sprintf("⚠️ [流不完整但已完成] [%s] 端点: %s, failure_reason: %s, 模型: %s",
+							connID, ep.Config.Name, failureReason, parsedModelName))
+						return
+					}
+
+					// 处理其他类型的错误（保留原有逻辑用于兼容）
 					var status, parsedModelName string = "error", "unknown"
 
 					// ✅ 从错误信息中提取状态和模型信息
