@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"sync"
 	"time"
 
@@ -1751,48 +1752,92 @@ func (ut *UsageTracker) ActiveRequestToDetail(req *ActiveRequest) RequestDetail 
 
 // QueryRequestDetailsWithHotPool 双源查询：热池 + 数据库
 // 返回合并后的请求列表，热池中的活跃请求排在前面
+// 🔧 [修复] 2025-12-11: 正确处理分页，确保返回数量不超过 limit
 func (ut *UsageTracker) QueryRequestDetailsWithHotPool(ctx context.Context, opts *QueryOptions) ([]RequestDetail, int64, error) {
 	var results []RequestDetail
-	var totalFromDB int64
 
-	// 1. 从热池获取活跃请求
-	hotPoolRequests := ut.getFilteredHotPoolRequests(opts)
-
-	// 2. 从数据库查询历史请求
-	dbRequests, err := ut.QueryRequestDetails(ctx, opts)
-	if err != nil {
-		return nil, 0, fmt.Errorf("failed to query database: %w", err)
+	// 获取分页参数
+	limit := opts.Limit
+	offset := opts.Offset
+	if limit <= 0 {
+		limit = 20 // 默认每页20条
 	}
 
-	// 3. 获取数据库总数（用于分页）
+	// 1. 从热池获取所有符合过滤条件的活跃请求（用于计算总数和分页）
+	allHotPoolRequests := ut.getFilteredHotPoolRequests(opts)
+	hotPoolCount := len(allHotPoolRequests)
+
+	// 2. 获取数据库总数（用于分页计算）
 	dbCount, err := ut.CountRequestDetails(ctx, opts)
 	if err != nil {
 		slog.Warn("Failed to count database requests", "error", err)
-		totalFromDB = int64(len(dbRequests))
-	} else {
-		totalFromDB = int64(dbCount)
+		dbCount = 0
 	}
 
-	// 4. 合并结果
-	// 策略：热池请求放在前面（最新的活跃请求），然后是数据库的历史请求
-	// 去重：如果数据库中有相同 request_id 的记录，以热池为准（更新）
+	// 3. 计算总数：热池 + 数据库
+	totalCount := int64(hotPoolCount) + int64(dbCount)
+
+	// 4. 热池数据按开始时间倒序排列（最新的在前）
+	if hotPoolCount > 0 {
+		sort.Slice(allHotPoolRequests, func(i, j int) bool {
+			return allHotPoolRequests[i].StartTime.After(allHotPoolRequests[j].StartTime)
+		})
+	}
 
 	// 创建热池请求ID集合用于去重
 	hotPoolIDs := make(map[string]bool)
-	for _, req := range hotPoolRequests {
+	for _, req := range allHotPoolRequests {
 		hotPoolIDs[req.RequestID] = true
-		results = append(results, req)
 	}
 
-	// 添加数据库请求（排除已在热池中的）
-	for _, req := range dbRequests {
-		if !hotPoolIDs[req.RequestID] {
-			results = append(results, req)
+	// 5. 根据 offset 和 limit 决定从哪里取数据
+	if offset < hotPoolCount {
+		// 当前页包含热池数据
+		hotPoolEnd := offset + limit
+		if hotPoolEnd > hotPoolCount {
+			hotPoolEnd = hotPoolCount
+		}
+		// 从热池取数据
+		results = append(results, allHotPoolRequests[offset:hotPoolEnd]...)
+
+		// 如果热池数据不够一页，从数据库补充
+		remaining := limit - len(results)
+		if remaining > 0 {
+			// 从数据库查询，offset=0 因为热池数据已经占据了前面的位置
+			dbOpts := *opts
+			dbOpts.Offset = 0
+			dbOpts.Limit = remaining + hotPoolCount // 多取一些用于去重
+			dbRequests, err := ut.QueryRequestDetails(ctx, &dbOpts)
+			if err != nil {
+				slog.Warn("Failed to query database requests", "error", err)
+			} else {
+				// 添加数据库请求（排除已在热池中的）
+				for _, req := range dbRequests {
+					if !hotPoolIDs[req.RequestID] && len(results) < limit {
+						results = append(results, req)
+					}
+				}
+			}
+		}
+	} else {
+		// 当前页只有数据库数据
+		// 调整数据库查询的 offset（减去热池数据的数量）
+		dbOpts := *opts
+		dbOpts.Offset = offset - hotPoolCount
+		dbOpts.Limit = limit + hotPoolCount // 多取一些用于去重
+
+		dbRequests, err := ut.QueryRequestDetails(ctx, &dbOpts)
+		if err != nil {
+			return nil, 0, fmt.Errorf("failed to query database: %w", err)
+		}
+
+		// 添加数据库请求（排除已在热池中的）
+		for _, req := range dbRequests {
+			if !hotPoolIDs[req.RequestID] && len(results) < limit {
+				results = append(results, req)
+			}
 		}
 	}
-
-	// 计算总数
-	totalCount := int64(len(hotPoolRequests)) + totalFromDB
 
 	return results, totalCount, nil
 }
