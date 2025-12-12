@@ -854,6 +854,7 @@ export namespace main {
 	}
 	export class UsageSummary {
 	    total_requests: number;
+	    all_time_total_requests: number;
 	    success_requests: number;
 	    failed_requests: number;
 	    total_input_tokens: number;
@@ -867,6 +868,7 @@ export namespace main {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.total_requests = source["total_requests"];
+	        this.all_time_total_requests = source["all_time_total_requests"];
 	        this.success_requests = source["success_requests"];
 	        this.failed_requests = source["failed_requests"];
 	        this.total_input_tokens = source["total_input_tokens"];

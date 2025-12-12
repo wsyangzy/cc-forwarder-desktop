@@ -83,13 +83,15 @@ type RequestUpdateData struct {
 
 // RequestCompleteData 请求完成事件数据
 type RequestCompleteData struct {
-	ModelName           string        `json:"model_name"`
-	InputTokens         int64         `json:"input_tokens"`
-	OutputTokens        int64         `json:"output_tokens"`
-	CacheCreationTokens int64         `json:"cache_creation_tokens"`
-	CacheReadTokens     int64         `json:"cache_read_tokens"`
-	Duration            time.Duration `json:"duration"`
-	FailureReason       string        `json:"failure_reason,omitempty"` // 可选：失败原因
+	ModelName             string        `json:"model_name"`
+	InputTokens           int64         `json:"input_tokens"`
+	OutputTokens          int64         `json:"output_tokens"`
+	CacheCreationTokens   int64         `json:"cache_creation_tokens"`
+	CacheCreation5mTokens int64         `json:"cache_creation_5m_tokens"` // v5.0.1+
+	CacheCreation1hTokens int64         `json:"cache_creation_1h_tokens"` // v5.0.1+
+	CacheReadTokens       int64         `json:"cache_read_tokens"`
+	Duration              time.Duration `json:"duration"`
+	FailureReason         string        `json:"failure_reason,omitempty"` // 可选：失败原因
 }
 
 // TokenUsage token使用统计
@@ -1007,19 +1009,55 @@ func (ut *UsageTracker) RecordFailedRequestTokens(requestID, modelName string, t
 		return
 	}
 
-	// 创建特殊的失败请求完成事件
+	// 🔥 v4.1 热池模式：直接更新内存中的请求数据
+	// 这样后续的 CompleteAndArchive 会将正确的 token 信息写入数据库
+	if ut.hotPoolEnabled && ut.hotPool != nil {
+		err := ut.hotPool.Update(requestID, func(req *ActiveRequest) {
+			// 更新 Token 信息
+			req.InputTokens = tokens.InputTokens
+			req.OutputTokens = tokens.OutputTokens
+			req.CacheCreationTokens = tokens.CacheCreationTokens
+			req.CacheCreation5mTokens = tokens.CacheCreation5mTokens
+			req.CacheCreation1hTokens = tokens.CacheCreation1hTokens
+			req.CacheReadTokens = tokens.CacheReadTokens
+			// 更新模型名（如果有）
+			if modelName != "" && modelName != "unknown" {
+				req.ModelName = modelName
+			}
+			// 更新持续时间
+			if duration > 0 {
+				req.DurationMs = duration.Milliseconds()
+			}
+			// 记录失败原因（不改变状态）
+			if failureReason != "" && req.FailureReason == "" {
+				req.FailureReason = failureReason
+			}
+		})
+		if err == nil {
+			slog.Debug(fmt.Sprintf("🔥 [热池Token更新] [%s] 原因: %s, 模型: %s, 输入: %d, 输出: %d",
+				requestID, failureReason, modelName, tokens.InputTokens, tokens.OutputTokens))
+			return
+		}
+		// 请求不在热池中（可能已归档），降级到传统模式
+		slog.Debug(fmt.Sprintf("🔥 [热池Token更新失败] [%s] 降级到事件队列模式, 错误: %v",
+			requestID, err))
+	}
+
+	// 传统模式：发送事件到队列（UPDATE 已存在的数据库记录）
 	event := RequestEvent{
-		Type:      "failed_request_tokens", // 新的事件类型
+		Type:      "failed_request_tokens",
 		RequestID: requestID,
 		Timestamp: ut.now(),
 		Data: RequestCompleteData{
-			ModelName:           modelName,
-			InputTokens:         tokens.InputTokens,
-			OutputTokens:        tokens.OutputTokens,
-			CacheCreationTokens: tokens.CacheCreationTokens,
-			CacheReadTokens:     tokens.CacheReadTokens,
-			Duration:            duration,
-			FailureReason:       failureReason, // 新增失败原因字段
+			ModelName:             modelName,
+			InputTokens:           tokens.InputTokens,
+			OutputTokens:          tokens.OutputTokens,
+			CacheCreationTokens:   tokens.CacheCreationTokens,
+			CacheCreation5mTokens: tokens.CacheCreation5mTokens,
+			CacheCreation1hTokens: tokens.CacheCreation1hTokens,
+			CacheReadTokens:       tokens.CacheReadTokens,
+			Duration:              duration,
+			FailureReason:         failureReason,
 		},
 	}
 
@@ -1039,19 +1077,45 @@ func (ut *UsageTracker) RecoverRequestTokens(requestID, modelName string, tokens
 		return
 	}
 
-	// 创建专门的Token恢复事件
+	// 🔥 v4.1 热池模式：如果请求还在热池中，先更新热池
+	if ut.hotPoolEnabled && ut.hotPool != nil {
+		err := ut.hotPool.Update(requestID, func(req *ActiveRequest) {
+			// 更新 Token 信息
+			req.InputTokens = tokens.InputTokens
+			req.OutputTokens = tokens.OutputTokens
+			req.CacheCreationTokens = tokens.CacheCreationTokens
+			req.CacheCreation5mTokens = tokens.CacheCreation5mTokens
+			req.CacheCreation1hTokens = tokens.CacheCreation1hTokens
+			req.CacheReadTokens = tokens.CacheReadTokens
+			// 更新模型名（如果有）
+			if modelName != "" && modelName != "unknown" {
+				req.ModelName = modelName
+			}
+		})
+		if err == nil {
+			slog.Info(fmt.Sprintf("🔥 [热池Token恢复] [%s] 模型: %s, 输入: %d, 输出: %d",
+				requestID, modelName, tokens.InputTokens, tokens.OutputTokens))
+			return
+		}
+		// 请求不在热池中（已归档），继续使用传统模式更新数据库
+		slog.Debug(fmt.Sprintf("🔥 [热池Token恢复失败] [%s] 请求已归档，使用UPDATE更新数据库",
+			requestID))
+	}
+
+	// 传统模式：发送事件到队列（UPDATE 已存在的数据库记录）
 	event := RequestEvent{
-		Type:      "token_recovery", // 专用事件类型
+		Type:      "token_recovery",
 		RequestID: requestID,
 		Timestamp: ut.now(),
 		Data: RequestCompleteData{
-			ModelName:           modelName,
-			InputTokens:         tokens.InputTokens,
-			OutputTokens:        tokens.OutputTokens,
-			CacheCreationTokens: tokens.CacheCreationTokens,
-			CacheReadTokens:     tokens.CacheReadTokens,
-			// 注意：Duration设为0，不更新时间相关字段
-			Duration: 0,
+			ModelName:             modelName,
+			InputTokens:           tokens.InputTokens,
+			OutputTokens:          tokens.OutputTokens,
+			CacheCreationTokens:   tokens.CacheCreationTokens,
+			CacheCreation5mTokens: tokens.CacheCreation5mTokens,
+			CacheCreation1hTokens: tokens.CacheCreation1hTokens,
+			CacheReadTokens:       tokens.CacheReadTokens,
+			Duration:              0, // 不更新时间相关字段
 		},
 	}
 

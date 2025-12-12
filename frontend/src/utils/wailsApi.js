@@ -431,6 +431,7 @@ export const getUsageSummary = async (startTime = '', endTime = '') => {
 
   return {
     total_requests: summary.total_requests || 0,
+    all_time_total_requests: summary.all_time_total_requests || 0, // 全部历史请求数
     successful_requests: summary.success_requests || 0,
     failed_requests: summary.failed_requests || 0,
     total_input_tokens: summary.total_input_tokens || 0,

@@ -250,27 +250,33 @@ func (ut *UsageTracker) buildWriteQuery(event RequestEvent) (string, []interface
 			return "", nil, fmt.Errorf("invalid failed_request_tokens event data type")
 		}
 
-		// 计算成本
+		// 计算成本（使用完整的 5m/1h 字段）
 		tokens := &TokenUsage{
-			InputTokens:         data.InputTokens,
-			OutputTokens:        data.OutputTokens,
-			CacheCreationTokens: data.CacheCreationTokens,
-			CacheReadTokens:     data.CacheReadTokens,
+			InputTokens:           data.InputTokens,
+			OutputTokens:          data.OutputTokens,
+			CacheCreationTokens:   data.CacheCreationTokens,
+			CacheCreation5mTokens: data.CacheCreation5mTokens,
+			CacheCreation1hTokens: data.CacheCreation1hTokens,
+			CacheReadTokens:       data.CacheReadTokens,
 		}
 
-		inputCost, outputCost, cacheCost, readCost, totalCost := ut.calculateCost(data.ModelName, tokens)
+		pricing := ut.GetPricing(data.ModelName)
+		costBreakdown := CalculateCostV2(tokens, &pricing, nil)
 
 		// 只更新Token相关字段和成本，不更新状态
-		// 调用点只在失败路径触发，无需额外的状态过滤
 		query := fmt.Sprintf(`UPDATE request_logs SET
 			model_name = COALESCE(?, model_name),
 			input_tokens = ?,
 			output_tokens = ?,
 			cache_creation_tokens = ?,
+			cache_creation_5m_tokens = ?,
+			cache_creation_1h_tokens = ?,
 			cache_read_tokens = ?,
 			input_cost_usd = ?,
 			output_cost_usd = ?,
 			cache_creation_cost_usd = ?,
+			cache_creation_5m_cost_usd = ?,
+			cache_creation_1h_cost_usd = ?,
 			cache_read_cost_usd = ?,
 			total_cost_usd = ?,
 			duration_ms = COALESCE(?, duration_ms),
@@ -282,12 +288,16 @@ func (ut *UsageTracker) buildWriteQuery(event RequestEvent) (string, []interface
 			data.InputTokens,
 			data.OutputTokens,
 			data.CacheCreationTokens,
+			data.CacheCreation5mTokens,
+			data.CacheCreation1hTokens,
 			data.CacheReadTokens,
-			inputCost,
-			outputCost,
-			cacheCost,
-			readCost,
-			totalCost,
+			costBreakdown.InputCost,
+			costBreakdown.OutputCost,
+			costBreakdown.CacheCreationCost,
+			costBreakdown.CacheCreation5mCost,
+			costBreakdown.CacheCreation1hCost,
+			costBreakdown.CacheReadCost,
+			costBreakdown.TotalCost,
 			data.Duration.Milliseconds(),
 			event.RequestID,
 		}
@@ -300,15 +310,18 @@ func (ut *UsageTracker) buildWriteQuery(event RequestEvent) (string, []interface
 			return "", nil, fmt.Errorf("invalid token_recovery event data type")
 		}
 
-		// 计算成本
+		// 计算成本（使用完整的 5m/1h 字段）
 		tokens := &TokenUsage{
-			InputTokens:         data.InputTokens,
-			OutputTokens:        data.OutputTokens,
-			CacheCreationTokens: data.CacheCreationTokens,
-			CacheReadTokens:     data.CacheReadTokens,
+			InputTokens:           data.InputTokens,
+			OutputTokens:          data.OutputTokens,
+			CacheCreationTokens:   data.CacheCreationTokens,
+			CacheCreation5mTokens: data.CacheCreation5mTokens,
+			CacheCreation1hTokens: data.CacheCreation1hTokens,
+			CacheReadTokens:       data.CacheReadTokens,
 		}
 
-		inputCost, outputCost, cacheCost, readCost, totalCost := ut.calculateCost(data.ModelName, tokens)
+		pricing := ut.GetPricing(data.ModelName)
+		costBreakdown := CalculateCostV2(tokens, &pricing, nil)
 
 		// 🔧 专用于恢复场景：更新任何状态的请求的Token字段，因为这是恢复不完整的数据
 		query := fmt.Sprintf(`UPDATE request_logs SET
@@ -316,10 +329,14 @@ func (ut *UsageTracker) buildWriteQuery(event RequestEvent) (string, []interface
 			input_tokens = ?,
 			output_tokens = ?,
 			cache_creation_tokens = ?,
+			cache_creation_5m_tokens = ?,
+			cache_creation_1h_tokens = ?,
 			cache_read_tokens = ?,
 			input_cost_usd = ?,
 			output_cost_usd = ?,
 			cache_creation_cost_usd = ?,
+			cache_creation_5m_cost_usd = ?,
+			cache_creation_1h_cost_usd = ?,
 			cache_read_cost_usd = ?,
 			total_cost_usd = ?,
 			updated_at = %s
@@ -330,12 +347,16 @@ func (ut *UsageTracker) buildWriteQuery(event RequestEvent) (string, []interface
 			data.InputTokens,
 			data.OutputTokens,
 			data.CacheCreationTokens,
+			data.CacheCreation5mTokens,
+			data.CacheCreation1hTokens,
 			data.CacheReadTokens,
-			inputCost,
-			outputCost,
-			cacheCost,
-			readCost,
-			totalCost,
+			costBreakdown.InputCost,
+			costBreakdown.OutputCost,
+			costBreakdown.CacheCreationCost,
+			costBreakdown.CacheCreation5mCost,
+			costBreakdown.CacheCreation1hCost,
+			costBreakdown.CacheReadCost,
+			costBreakdown.TotalCost,
 			event.RequestID,
 		}
 

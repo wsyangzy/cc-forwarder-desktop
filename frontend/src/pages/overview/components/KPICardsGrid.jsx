@@ -11,7 +11,6 @@ import {
   Activity
 } from 'lucide-react';
 import { KPICard } from '@components/ui';
-import { formatNumber } from '@utils/api.js';
 
 const KPICardsGrid = ({ data }) => {
   const { status, endpoints, connections, groups } = data;
@@ -53,7 +52,7 @@ const KPICardsGrid = ({ data }) => {
       />
       <KPICard
         title="总请求数"
-        value={formatNumber(connections.total_requests || 0)}
+        value={connections.all_time_total_requests || 0}
         icon={Network}
         statusColor="bg-purple-50 text-purple-600"
       />

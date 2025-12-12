@@ -92,21 +92,18 @@ const RequestsPage = () => {
 
       const queryParams = buildQueryParams();
 
-      // 计算offset: 后端API使用offset而非page
-      const offset = (pagination.page - 1) * pagination.pageSize;
-
       // 为stats API添加默认时间范围（30天），避免无数据问题
       const statsParams = {
         ...queryParams,
-        period: '30d'  // 默认查询30天数据
+        period: '30d'
       };
 
       // v4.0: 简化数据获取，移除 keysData
       const [requestsData, statsData, modelsData, endpointsData, groupsData] = await Promise.all([
         fetchRequests({
           ...queryParams,
-          offset,
-          limit: pagination.pageSize
+          page: pagination.page,
+          pageSize: pagination.pageSize
         }),
         fetchUsageStats(statsParams),
         fetchModels(),

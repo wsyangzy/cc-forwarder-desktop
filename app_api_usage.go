@@ -16,16 +16,17 @@ import (
 
 // UsageSummary 使用统计摘要
 type UsageSummary struct {
-	TotalRequests     int64   `json:"total_requests"`
-	SuccessRequests   int64   `json:"success_requests"`
-	FailedRequests    int64   `json:"failed_requests"`
-	TotalInputTokens  int64   `json:"total_input_tokens"`
-	TotalOutputTokens int64   `json:"total_output_tokens"`
-	TotalCost         float64 `json:"total_cost"`
+	TotalRequests           int64   `json:"total_requests"`             // 运行时请求数
+	AllTimeTotalRequests    int64   `json:"all_time_total_requests"`    // 全部历史请求数（数据库）
+	SuccessRequests         int64   `json:"success_requests"`
+	FailedRequests          int64   `json:"failed_requests"`
+	TotalInputTokens        int64   `json:"total_input_tokens"`
+	TotalOutputTokens       int64   `json:"total_output_tokens"`
+	TotalCost               float64 `json:"total_cost"`
 }
 
 // GetUsageSummary 获取使用统计摘要
-// 当没有传递时间参数时，返回运行时统计（从内存）
+// 当没有传递时间参数时，返回运行时统计（从内存）+ 全部历史请求总数（从数据库）
 // 当传递时间参数时，返回历史数据（从数据库）
 func (a *App) GetUsageSummary(startTimeStr, endTimeStr string) (UsageSummary, error) {
 	a.mu.RLock()
@@ -45,13 +46,25 @@ func (a *App) GetUsageSummary(startTimeStr, endTimeStr string) (UsageSummary, er
 		totalInputTokens := stats.TotalTokenUsage.InputTokens
 		totalOutputTokens := stats.TotalTokenUsage.OutputTokens
 
+		// 查询数据库获取全部历史请求总数
+		var allTimeTotal int64
+		if a.usageTracker != nil {
+			ctx := context.Background()
+			// 使用 CountRequestDetails 查询全部请求数（不传时间范围）
+			count, err := a.usageTracker.CountRequestDetails(ctx, &tracking.QueryOptions{})
+			if err == nil {
+				allTimeTotal = int64(count)
+			}
+		}
+
 		return UsageSummary{
-			TotalRequests:     stats.TotalRequests,
-			SuccessRequests:   stats.SuccessfulRequests,
-			FailedRequests:    stats.FailedRequests,
-			TotalInputTokens:  totalInputTokens,
-			TotalOutputTokens: totalOutputTokens,
-			TotalCost:         0, // 运行时统计不计算成本
+			TotalRequests:           stats.TotalRequests,
+			AllTimeTotalRequests:    allTimeTotal,
+			SuccessRequests:         stats.SuccessfulRequests,
+			FailedRequests:          stats.FailedRequests,
+			TotalInputTokens:        totalInputTokens,
+			TotalOutputTokens:       totalOutputTokens,
+			TotalCost:               0, // 运行时统计不计算成本
 		}, nil
 	}
 

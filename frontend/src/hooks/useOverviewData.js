@@ -109,7 +109,7 @@ const useOverviewData = () => {
       // 处理连接统计事件
       if (eventType === 'connection' || changeType === 'connection_stats_updated') {
         const connectionFields = [
-          'total_requests', 'active_connections', 'successful_requests',
+          'total_requests', 'all_time_total_requests', 'active_connections', 'successful_requests',
           'failed_requests', 'average_response_time', 'total_tokens'
         ];
         const connectionUpdates = {};
