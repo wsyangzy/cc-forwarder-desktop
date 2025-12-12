@@ -17,7 +17,12 @@ const useOverviewData = () => {
       successful_requests: 0,
       failed_requests: 0,
       average_response_time: '0s',
-      total_tokens: 0
+      total_tokens: 0,
+      today_cost: 0,              // 今日成本
+      all_time_total_cost: 0,     // 全部历史成本
+      today_tokens: 0,            // 今日 tokens
+      all_time_total_tokens: 0,   // 全部历史 tokens
+      today_requests: 0           // 今日请求数
     },
     groups: {
       active_group: null,

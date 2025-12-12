@@ -1,9 +1,9 @@
 // ============================================
 // 主 App 组件 - Dashboard 入口
-// 2025-11-28
+// 2025-11-28 (Updated 2025-12-12)
 // ============================================
 
-import { useState, Suspense, lazy } from 'react';
+import { useState, Suspense, lazy, useCallback } from 'react';
 import Header from '@components/layout/Header.jsx';
 import { LoadingSpinner } from '@components/ui';
 import useSSE from '@hooks/useSSE.js';
@@ -28,9 +28,26 @@ const LogsPage = lazy(() => import('@pages/log-viewer/index.jsx'));
 
 function App() {
   const [activeTab, setActiveTab] = useState('overview');
+  // v5.1+: 代理网关真实状态（来自后端 system:status 事件）
+  const [proxyStatus, setProxyStatus] = useState({
+    running: false,
+    port: 0,
+    host: '127.0.0.1'
+  });
+
+  // 处理 system:status 事件
+  const handleStatusUpdate = useCallback((data) => {
+    if (data?.proxy_running !== undefined) {
+      setProxyStatus({
+        running: data.proxy_running,
+        port: data.proxy_port || 0,
+        host: data.proxy_host || '127.0.0.1'
+      });
+    }
+  }, []);
 
   // SSE 连接状态（用于全局状态指示）
-  const { connectionStatus } = useSSE(() => {}, { events: 'status' });
+  const { connectionStatus } = useSSE(handleStatusUpdate, { events: 'status' });
 
   // 渲染当前页面
   const renderPage = () => {
@@ -68,6 +85,7 @@ function App() {
         activeTab={activeTab}
         onTabChange={setActiveTab}
         connectionStatus={connectionStatus}
+        proxyStatus={proxyStatus}
       />
 
       {/* 主内容区 */}

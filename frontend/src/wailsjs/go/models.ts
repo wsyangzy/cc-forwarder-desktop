@@ -855,11 +855,16 @@ export namespace main {
 	export class UsageSummary {
 	    total_requests: number;
 	    all_time_total_requests: number;
+	    today_requests: number;
 	    success_requests: number;
 	    failed_requests: number;
 	    total_input_tokens: number;
 	    total_output_tokens: number;
 	    total_cost: number;
+	    today_cost: number;
+	    all_time_total_cost: number;
+	    today_tokens: number;
+	    all_time_total_tokens: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new UsageSummary(source);
@@ -869,11 +874,16 @@ export namespace main {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.total_requests = source["total_requests"];
 	        this.all_time_total_requests = source["all_time_total_requests"];
+	        this.today_requests = source["today_requests"];
 	        this.success_requests = source["success_requests"];
 	        this.failed_requests = source["failed_requests"];
 	        this.total_input_tokens = source["total_input_tokens"];
 	        this.total_output_tokens = source["total_output_tokens"];
 	        this.total_cost = source["total_cost"];
+	        this.today_cost = source["today_cost"];
+	        this.all_time_total_cost = source["all_time_total_cost"];
+	        this.today_tokens = source["today_tokens"];
+	        this.all_time_total_tokens = source["all_time_total_tokens"];
 	    }
 	}
 

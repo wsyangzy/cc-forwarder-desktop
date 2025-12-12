@@ -1,6 +1,6 @@
 // ============================================
 // 布局组件 - Header 导航栏
-// 2025-11-28 (Updated 2025-12-04 for Wails transparent titlebar)
+// 2025-11-28 (Updated 2025-12-12 for proxy status display)
 // ============================================
 
 import { Command } from 'lucide-react';
@@ -20,7 +20,7 @@ const NavItem = ({ label, active, onClick }) => (
   </button>
 );
 
-const Header = ({ activeTab, onTabChange, connectionStatus = 'connected' }) => {
+const Header = ({ activeTab, onTabChange, connectionStatus = 'connected', proxyStatus = {} }) => {
   const tabs = [
     { name: 'overview', label: '概览' },
     { name: 'endpoints', label: '端点管理' },
@@ -34,14 +34,36 @@ const Header = ({ activeTab, onTabChange, connectionStatus = 'connected' }) => {
     { name: 'settings', label: '设置' }
   ];
 
-  const statusConfig = {
-    connected: { color: 'bg-emerald-500', text: 'API 网关运行中' },
-    connecting: { color: 'bg-amber-500 animate-pulse', text: '连接中...' },
-    disconnected: { color: 'bg-slate-400', text: '已断开' },
-    error: { color: 'bg-rose-500', text: '连接错误' }
+  // v5.1+: 使用真实的代理网关状态
+  const { running: proxyRunning = false, port: proxyPort = 0 } = proxyStatus;
+
+  // 确定显示状态：优先使用代理网关真实状态，回退到连接状态
+  const getDisplayStatus = () => {
+    // 如果 Wails 事件通道未连接
+    if (connectionStatus !== 'connected') {
+      return {
+        color: 'bg-amber-500',
+        text: connectionStatus === 'connecting' ? '连接中...' : '事件通道断开',
+        ping: connectionStatus === 'connecting'
+      };
+    }
+    // Wails 事件通道已连接，检查代理网关状态
+    if (proxyRunning && proxyPort > 0) {
+      return {
+        color: 'bg-emerald-500',
+        text: `代理端口 :${proxyPort}`,
+        ping: true
+      };
+    }
+    // 代理网关未运行或端口未知
+    return {
+      color: 'bg-rose-500',
+      text: '代理未运行',
+      ping: false
+    };
   };
 
-  const status = statusConfig[connectionStatus] || statusConfig.disconnected;
+  const status = getDisplayStatus();
 
   // Wails 环境下为窗口按钮预留顶部空间
   const isWails = isWailsEnvironment();
@@ -84,7 +106,12 @@ const Header = ({ activeTab, onTabChange, connectionStatus = 'connected' }) => {
         <div className="flex items-center space-x-4">
           {/* 连接状态 */}
           <div className="hidden sm:flex items-center px-3 py-1.5 bg-white border border-slate-200 rounded-md shadow-sm text-xs text-slate-500">
-            <span className={`w-2 h-2 rounded-full ${status.color} mr-2`}></span>
+            <span className="relative flex h-2 w-2 mr-2">
+              {status.ping && (
+                <span className={`animate-ping absolute inline-flex h-full w-full rounded-full ${status.color} opacity-75`}></span>
+              )}
+              <span className={`relative inline-flex rounded-full h-2 w-2 ${status.color}`}></span>
+            </span>
             {status.text}
           </div>
 

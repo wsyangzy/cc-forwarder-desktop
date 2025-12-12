@@ -18,7 +18,7 @@ import {
 // ============================================
 // KPI 卡片组件
 // ============================================
-export const KPICard = ({ title, value, subText, icon: Icon, statusColor = 'bg-slate-100 text-slate-600' }) => (
+export const KPICard = ({ title, value, tooltip, subText, icon: Icon, statusColor = 'bg-slate-100 text-slate-600' }) => (
   <div className="bg-white p-5 rounded-2xl border border-slate-200/60 shadow-sm flex flex-col justify-between hover:shadow-md transition-shadow">
     <div className="flex justify-between items-start mb-2">
       <div className={`p-2 rounded-lg ${statusColor}`}>
@@ -27,7 +27,12 @@ export const KPICard = ({ title, value, subText, icon: Icon, statusColor = 'bg-s
     </div>
     <div>
       <h3 className="text-slate-500 text-xs font-semibold uppercase tracking-wider mb-1">{title}</h3>
-      <div className="text-xl font-bold text-slate-900 truncate">{value}</div>
+      <div
+        className="text-xl font-bold text-slate-900 truncate cursor-default"
+        title={tooltip || value}
+      >
+        {value}
+      </div>
       {subText && <div className="text-xs text-slate-400 mt-1 font-medium">{subText}</div>}
     </div>
   </div>

@@ -13,7 +13,22 @@ package main
 
 import (
 	"fmt"
+	"net"
+	"sync"
 	"time"
+)
+
+// 端口检测缓存（避免频繁 TCP 连接）
+// 使用 map 绑定到具体的 host:port，避免配置更改后返回旧端口状态
+type portCheckCacheEntry struct {
+	result    bool
+	timestamp time.Time
+}
+
+var (
+	portCheckCacheMap = make(map[string]portCheckCacheEntry) // key: "host:port"
+	portCheckCacheMu  sync.RWMutex
+	portCheckCacheTTL = 500 * time.Millisecond // 缓存有效期
 )
 
 // ============================================================
@@ -46,7 +61,7 @@ func (a *App) GetSystemStatus() SystemStatus {
 		Uptime:        formatDuration(uptime),
 		UptimeSeconds: int64(uptime.Seconds()),
 		StartTime:     a.startTime.Format(time.RFC3339),
-		ProxyRunning:  a.isRunning,
+		ProxyRunning:  a.isRunning && a.proxyServer != nil,
 		ConfigPath:    a.configPath,
 	}
 
@@ -54,6 +69,11 @@ func (a *App) GetSystemStatus() SystemStatus {
 		status.ProxyPort = a.config.Server.Port
 		status.ProxyHost = a.config.Server.Host
 		status.AuthEnabled = a.config.Auth.Enabled
+
+		// 真正检测端口是否在监听
+		if status.ProxyRunning {
+			status.ProxyRunning = a.checkPortListening(status.ProxyHost, status.ProxyPort)
+		}
 	}
 
 	if a.endpointManager != nil {
@@ -67,6 +87,40 @@ func (a *App) GetSystemStatus() SystemStatus {
 	}
 
 	return status
+}
+
+// checkPortListening 检测端口是否在监听（带缓存，避免频繁 TCP 连接）
+func (a *App) checkPortListening(host string, port int) bool {
+	// 使用 net.JoinHostPort 正确处理 IPv6 地址
+	addr := net.JoinHostPort(host, fmt.Sprintf("%d", port))
+
+	// 先检查缓存（绑定到具体的 host:port）
+	portCheckCacheMu.RLock()
+	if entry, ok := portCheckCacheMap[addr]; ok {
+		if time.Since(entry.timestamp) < portCheckCacheTTL {
+			portCheckCacheMu.RUnlock()
+			return entry.result
+		}
+	}
+	portCheckCacheMu.RUnlock()
+
+	// 缓存过期或不存在，执行真实检测
+	conn, err := net.DialTimeout("tcp", addr, 100*time.Millisecond)
+
+	result := err == nil
+	if conn != nil {
+		conn.Close()
+	}
+
+	// 更新缓存
+	portCheckCacheMu.Lock()
+	portCheckCacheMap[addr] = portCheckCacheEntry{
+		result:    result,
+		timestamp: time.Now(),
+	}
+	portCheckCacheMu.Unlock()
+
+	return result
 }
 
 // ============================================================

@@ -16,13 +16,18 @@ import (
 
 // UsageSummary 使用统计摘要
 type UsageSummary struct {
-	TotalRequests           int64   `json:"total_requests"`             // 运行时请求数
-	AllTimeTotalRequests    int64   `json:"all_time_total_requests"`    // 全部历史请求数（数据库）
+	TotalRequests           int64   `json:"total_requests"`              // 运行时请求数
+	AllTimeTotalRequests    int64   `json:"all_time_total_requests"`     // 全部历史请求数（数据库）
+	TodayRequests           int64   `json:"today_requests"`              // 今日请求数（数据库）
 	SuccessRequests         int64   `json:"success_requests"`
 	FailedRequests          int64   `json:"failed_requests"`
 	TotalInputTokens        int64   `json:"total_input_tokens"`
 	TotalOutputTokens       int64   `json:"total_output_tokens"`
-	TotalCost               float64 `json:"total_cost"`
+	TotalCost               float64 `json:"total_cost"`                  // 运行时成本
+	TodayCost               float64 `json:"today_cost"`                  // 今日成本（数据库）
+	AllTimeTotalCost        float64 `json:"all_time_total_cost"`         // 全部历史成本（数据库）
+	TodayTokens             int64   `json:"today_tokens"`                // 今日 tokens（数据库）
+	AllTimeTotalTokens      int64   `json:"all_time_total_tokens"`       // 全部历史 tokens（数据库）
 }
 
 // GetUsageSummary 获取使用统计摘要
@@ -46,25 +51,48 @@ func (a *App) GetUsageSummary(startTimeStr, endTimeStr string) (UsageSummary, er
 		totalInputTokens := stats.TotalTokenUsage.InputTokens
 		totalOutputTokens := stats.TotalTokenUsage.OutputTokens
 
-		// 查询数据库获取全部历史请求总数
+		// 查询数据库获取全部历史和今日统计
+		var allTimeTotalCost float64
+		var allTimeTotalTokens int64
 		var allTimeTotal int64
+		var todayCost float64
+		var todayTokens int64
+		var todayRequests int64
+
 		if a.usageTracker != nil {
 			ctx := context.Background()
-			// 使用 CountRequestDetails 查询全部请求数（不传时间范围）
-			count, err := a.usageTracker.CountRequestDetails(ctx, &tracking.QueryOptions{})
-			if err == nil {
-				allTimeTotal = int64(count)
+
+			// 获取配置的时区
+			loc := time.Local
+			if a.config != nil && a.config.Timezone != "" {
+				if parsedLoc, err := time.LoadLocation(a.config.Timezone); err == nil {
+					loc = parsedLoc
+				}
 			}
+
+			// 直接从 request_logs 表查询全部历史统计
+			allTimeTotalCost, allTimeTotalTokens, allTimeTotal = a.queryStatsFromDB(ctx, time.Time{}, time.Now())
+
+			// 查询今日统计（使用配置的时区）
+			now := time.Now().In(loc)
+			todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
+			todayEnd := todayStart.Add(24 * time.Hour)
+			todayCost, todayTokens, todayRequests = a.queryStatsFromDB(ctx, todayStart, todayEnd)
 		}
 
 		return UsageSummary{
 			TotalRequests:           stats.TotalRequests,
 			AllTimeTotalRequests:    allTimeTotal,
+			TodayRequests:           todayRequests,
 			SuccessRequests:         stats.SuccessfulRequests,
 			FailedRequests:          stats.FailedRequests,
 			TotalInputTokens:        totalInputTokens,
 			TotalOutputTokens:       totalOutputTokens,
 			TotalCost:               0, // 运行时统计不计算成本
+			TodayCost:               todayCost,
+			AllTimeTotalCost:        allTimeTotalCost,
+			TodayTokens:             todayTokens,
+			AllTimeTotalTokens:      allTimeTotalTokens,
 		}, nil
 	}
 
@@ -113,6 +141,38 @@ func (a *App) GetUsageSummary(startTimeStr, endTimeStr string) (UsageSummary, er
 	}
 
 	return result, nil
+}
+
+// queryStatsFromDB 直接从 request_logs 表查询成本、tokens 和请求数
+func (a *App) queryStatsFromDB(ctx context.Context, startTime, endTime time.Time) (cost float64, tokens int64, requests int64) {
+	if a.usageTracker == nil {
+		return 0, 0, 0
+	}
+
+	db := a.usageTracker.GetDB()
+	if db == nil {
+		return 0, 0, 0
+	}
+
+	var query string
+	var args []interface{}
+
+	if startTime.IsZero() {
+		// 查询全部历史
+		query = "SELECT COALESCE(SUM(total_cost_usd), 0), COALESCE(SUM(input_tokens + output_tokens), 0), COUNT(*) FROM request_logs"
+	} else {
+		// 查询指定时间范围
+		query = "SELECT COALESCE(SUM(total_cost_usd), 0), COALESCE(SUM(input_tokens + output_tokens), 0), COUNT(*) FROM request_logs WHERE start_time >= ? AND start_time < ?"
+		args = append(args, startTime, endTime)
+	}
+
+	err := db.QueryRowContext(ctx, query, args...).Scan(&cost, &tokens, &requests)
+	if err != nil {
+		a.logger.Debug("查询统计数据失败", "error", err)
+		return 0, 0, 0
+	}
+
+	return cost, tokens, requests
 }
 
 // RequestRecord 请求记录

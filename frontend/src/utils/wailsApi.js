@@ -432,11 +432,16 @@ export const getUsageSummary = async (startTime = '', endTime = '') => {
   return {
     total_requests: summary.total_requests || 0,
     all_time_total_requests: summary.all_time_total_requests || 0, // 全部历史请求数
+    today_requests: summary.today_requests || 0,            // 今日请求数
     successful_requests: summary.success_requests || 0,
     failed_requests: summary.failed_requests || 0,
     total_input_tokens: summary.total_input_tokens || 0,
     total_output_tokens: summary.total_output_tokens || 0,
     total_cost: summary.total_cost || 0,
+    today_cost: summary.today_cost || 0,                    // 今日成本
+    all_time_total_cost: summary.all_time_total_cost || 0,  // 全部历史成本
+    today_tokens: summary.today_tokens || 0,                // 今日 tokens
+    all_time_total_tokens: summary.all_time_total_tokens || 0,  // 全部历史 tokens
     total_tokens: (summary.total_input_tokens || 0) + (summary.total_output_tokens || 0)
   };
 };
