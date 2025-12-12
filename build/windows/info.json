@@ -1,0 +1,15 @@
+{
+  "fixed": {
+    "file_version": "5.0.0.0"
+  },
+  "info": {
+    "0000": {
+      "ProductVersion": "5.0.0",
+      "CompanyName": "CC-Forwarder",
+      "FileDescription": "Claude/OpenAI API 本地代理转发服务",
+      "LegalCopyright": "Copyright © 2025 CC-Forwarder",
+      "ProductName": "CC-Forwarder",
+      "Comments": "高性能 API 代理转发与管理工具"
+    }
+  }
+}
