@@ -186,6 +186,9 @@ type RequestRecord struct {
 	Model                  string  `json:"model"`
 	Status                 string  `json:"status"`
 	HTTPStatus             int     `json:"http_status"`
+	RetryCount             int     `json:"retry_count"`              // 重试次数
+	FailureReason          string  `json:"failure_reason,omitempty"` // 失败原因
+	CancelReason           string  `json:"cancel_reason,omitempty"`  // 取消原因
 	InputTokens            int64   `json:"input_tokens"`
 	OutputTokens           int64   `json:"output_tokens"`
 	CacheCreationTokens    int64   `json:"cache_creation_tokens"`     // 总缓存创建（向后兼容）
@@ -310,6 +313,9 @@ func (a *App) GetRequests(params RequestQueryParams) (RequestListResult, error) 
 			Group:                 r.GroupName,
 			Model:                 r.ModelName,
 			Status:                r.Status,
+			RetryCount:            r.RetryCount,
+			FailureReason:         r.FailureReason,
+			CancelReason:          r.CancelReason,
 			InputTokens:           r.InputTokens,
 			OutputTokens:          r.OutputTokens,
 			CacheCreationTokens:   r.CacheCreationTokens,

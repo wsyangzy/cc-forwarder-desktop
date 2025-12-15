@@ -938,12 +938,16 @@ func (ut *UsageTracker) RecordRequestFinalFailure(requestID, modelName, status, 
 			if modelName != "" && modelName != "unknown" {
 				req.ModelName = modelName
 			}
-			req.InputTokens = inputTokens
-			req.OutputTokens = outputTokens
-			req.CacheCreationTokens = cacheCreationTokens
-			req.CacheCreation5mTokens = cacheCreation5mTokens // 🔧 [修复] 2025-12-11
-			req.CacheCreation1hTokens = cacheCreation1hTokens // 🔧 [修复] 2025-12-11
-			req.CacheReadTokens = cacheReadTokens
+			// 🔧 [修复] 2025-12-15: 只有当 tokens 参数不为 nil 时才更新 token 字段
+			// 否则保留热池中已有的值（可能由 RecordFailedRequestTokens 设置）
+			if tokens != nil {
+				req.InputTokens = inputTokens
+				req.OutputTokens = outputTokens
+				req.CacheCreationTokens = cacheCreationTokens
+				req.CacheCreation5mTokens = cacheCreation5mTokens
+				req.CacheCreation1hTokens = cacheCreation1hTokens
+				req.CacheReadTokens = cacheReadTokens
+			}
 			req.EndTime = &now
 			req.DurationMs = duration.Milliseconds()
 			// 根据状态设置原因字段

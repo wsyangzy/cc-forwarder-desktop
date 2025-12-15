@@ -584,6 +584,9 @@ export namespace main {
 	    model: string;
 	    status: string;
 	    http_status: number;
+	    retry_count: number;
+	    failure_reason?: string;
+	    cancel_reason?: string;
 	    input_tokens: number;
 	    output_tokens: number;
 	    cache_creation_tokens: number;
@@ -609,6 +612,9 @@ export namespace main {
 	        this.model = source["model"];
 	        this.status = source["status"];
 	        this.http_status = source["http_status"];
+	        this.retry_count = source["retry_count"];
+	        this.failure_reason = source["failure_reason"];
+	        this.cancel_reason = source["cancel_reason"];
 	        this.input_tokens = source["input_tokens"];
 	        this.output_tokens = source["output_tokens"];
 	        this.cache_creation_tokens = source["cache_creation_tokens"];

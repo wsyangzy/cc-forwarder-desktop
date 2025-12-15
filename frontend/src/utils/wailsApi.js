@@ -483,6 +483,8 @@ export const getRequests = async (params = {}) => {
     model: r.model,
     status: r.status,
     status_code: r.http_status,
+    http_status_code: r.http_status,  // 添加 http_status_code 映射
+    retry_count: r.retry_count || 0,  // 添加重试次数
     input_tokens: r.input_tokens,
     output_tokens: r.output_tokens,
     cache_creation_tokens: r.cache_creation_tokens,
@@ -493,7 +495,10 @@ export const getRequests = async (params = {}) => {
     duration: r.response_time,
     is_streaming: r.is_streaming,
     total_cost_usd: r.cost,
-    cost: r.cost
+    cost: r.cost,
+    // 错误信息字段
+    failure_reason: r.failure_reason || '',
+    cancel_reason: r.cancel_reason || ''
   }));
 
   return {
