@@ -33,6 +33,10 @@ export function useWailsLogs(options = {}) {
 
   const unsubscribeRef = useRef(null);
   const isMountedRef = useRef(true);
+  // 防止并发调用 startStreaming
+  const isStartingRef = useRef(false);
+  // 唯一实例 ID，用于防止 StrictMode 下的重复订阅
+  const instanceIdRef = useRef(Date.now().toString(36) + Math.random().toString(36).slice(2));
 
   // 日志级别过滤
   const filterLogs = useCallback((logList) => {
@@ -63,24 +67,38 @@ export function useWailsLogs(options = {}) {
 
   // 启动日志流
   const startStreaming = useCallback(async () => {
-    try {
-      // 先用 EventsOff 显式取消所有 log:batch 订阅，避免重复
-      EventsOff('log:batch');
-      unsubscribeRef.current = null;
+    // 防止并发调用（解决 StrictMode 和异步竞态问题）
+    if (isStartingRef.current) {
+      console.log('📡 [日志流] 已有启动操作进行中，跳过');
+      return;
+    }
+    isStartingRef.current = true;
 
+    try {
       // 检查是否已经在流式传输
       const status = await GetLogStreamStatus();
       if (!status) {
         await StartLogStream();
       }
 
-      if (isMountedRef.current) {
-        setIsStreaming(true);
+      // 组件已卸载，不继续订阅
+      if (!isMountedRef.current) {
+        isStartingRef.current = false;
+        return;
       }
 
+      // ⚠️ 关键修复：在订阅之前取消所有现有订阅
+      // 放在异步操作之后，确保取消的是已经存在的订阅
+      EventsOff('log:batch');
+      unsubscribeRef.current = null;
+
       // 订阅日志事件（批量）
+      const currentInstanceId = instanceIdRef.current;
       const unsubscribe = EventsOn('log:batch', (batchLogs) => {
-        if (!isMountedRef.current) return;
+        // 检查是否仍是当前实例且组件未卸载
+        if (!isMountedRef.current || instanceIdRef.current !== currentInstanceId) {
+          return;
+        }
 
         setLogs(prevLogs => {
           // 合并新日志，限制总数
@@ -90,17 +108,26 @@ export function useWailsLogs(options = {}) {
       });
 
       unsubscribeRef.current = unsubscribe;
+
+      if (isMountedRef.current) {
+        setIsStreaming(true);
+      }
     } catch (err) {
       console.error('❌ 启动日志流失败:', err);
       if (isMountedRef.current) {
         setError(err.message || '启动失败');
       }
+    } finally {
+      isStartingRef.current = false;
     }
   }, [maxLogs, filterLogs]);
 
   // 停止日志流
   const stopStreaming = useCallback(async () => {
     try {
+      // 更新实例 ID，使旧的回调失效
+      instanceIdRef.current = Date.now().toString(36) + Math.random().toString(36).slice(2);
+
       // 用 EventsOff 显式取消所有 log:batch 订阅
       EventsOff('log:batch');
       unsubscribeRef.current = null;
@@ -129,9 +156,13 @@ export function useWailsLogs(options = {}) {
     await loadRecentLogs();
   }, [loadRecentLogs]);
 
-  // 初始化
+  // 初始化 - 只在组件挂载时执行一次
   useEffect(() => {
     isMountedRef.current = true;
+    // 重置启动锁
+    isStartingRef.current = false;
+    // 生成新的实例 ID
+    instanceIdRef.current = Date.now().toString(36) + Math.random().toString(36).slice(2);
 
     // 1. 加载历史日志
     loadRecentLogs();
@@ -141,25 +172,31 @@ export function useWailsLogs(options = {}) {
       startStreaming();
     }
 
-    // 清理
+    // 清理函数
     return () => {
       isMountedRef.current = false;
+      // 取消所有订阅
+      EventsOff('log:batch');
       if (unsubscribeRef.current) {
         unsubscribeRef.current();
+        unsubscribeRef.current = null;
       }
-      // 停止流
-      stopStreaming();
     };
-  }, [autoStart, loadRecentLogs, startStreaming, stopStreaming]);
+    // 注意：依赖数组为空，只在挂载/卸载时执行
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // 页面可见性控制：当页面不可见时停止监听，节省资源
   useEffect(() => {
+    // 跳过初始渲染
+    if (!isMountedRef.current) return;
+
     if (!isActive && isStreaming) {
       // 页面不可见，停止监听
       console.log('📴 日志页面不可见，停止日志流');
       stopStreaming();
-    } else if (isActive && !isStreaming && autoStart) {
-      // 页面重新可见，重新启动
+    } else if (isActive && !isStreaming && autoStart && !isStartingRef.current) {
+      // 页面重新可见，重新启动（确保没有正在启动的操作）
       console.log('📡 日志页面可见，重新启动日志流');
       startStreaming();
     }
