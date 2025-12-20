@@ -18,6 +18,10 @@ func TestGroupChangeNotifications(t *testing.T) {
 			Cooldown:                time.Minute * 5,
 			AutoSwitchBetweenGroups: true,
 		},
+		Failover: config.FailoverConfig{
+			Enabled:         true,
+			DefaultCooldown: time.Minute * 5,
+		},
 	}
 
 	// Create group manager
@@ -135,6 +139,10 @@ func TestGroupCooldownNotifications(t *testing.T) {
 			Cooldown:                time.Second,
 			AutoSwitchBetweenGroups: true,
 		},
+		Failover: config.FailoverConfig{
+			Enabled:         true,
+			DefaultCooldown: time.Second,
+		},
 	}
 
 	gm := endpoint.NewGroupManager(cfg)
@@ -202,6 +210,10 @@ func TestGroupPauseResumeNotifications(t *testing.T) {
 		Group: config.GroupConfig{
 			Cooldown:                time.Minute * 5,
 			AutoSwitchBetweenGroups: true,
+		},
+		Failover: config.FailoverConfig{
+			Enabled:         true,
+			DefaultCooldown: time.Minute * 5,
 		},
 	}
 
@@ -303,6 +315,10 @@ func TestGroupNotificationConcurrency(t *testing.T) {
 			Cooldown:                time.Second,
 			AutoSwitchBetweenGroups: true,
 		},
+		Failover: config.FailoverConfig{
+			Enabled:         true,
+			DefaultCooldown: time.Second,
+		},
 	}
 
 	gm := endpoint.NewGroupManager(cfg)
@@ -398,6 +414,10 @@ func TestGroupNotificationMemoryLeak(t *testing.T) {
 			Cooldown:                time.Second,
 			AutoSwitchBetweenGroups: true,
 		},
+		Failover: config.FailoverConfig{
+			Enabled:         true,
+			DefaultCooldown: time.Second,
+		},
 	}
 
 	gm := endpoint.NewGroupManager(cfg)
@@ -463,6 +483,10 @@ func TestGroupNotificationBuffering(t *testing.T) {
 		Group: config.GroupConfig{
 			Cooldown:                time.Second,
 			AutoSwitchBetweenGroups: true,
+		},
+		Failover: config.FailoverConfig{
+			Enabled:         true,
+			DefaultCooldown: time.Second,
 		},
 	}
 
@@ -536,6 +560,10 @@ func TestGroupNotificationErrorConditions(t *testing.T) {
 			Cooldown:                time.Second,
 			AutoSwitchBetweenGroups: true,
 		},
+		Failover: config.FailoverConfig{
+			Enabled:         true,
+			DefaultCooldown: time.Second,
+		},
 	}
 
 	gm := endpoint.NewGroupManager(cfg)
@@ -587,6 +615,10 @@ func BenchmarkGroupNotificationSubscribe(b *testing.B) {
 			Cooldown:                time.Second,
 			AutoSwitchBetweenGroups: true,
 		},
+		Failover: config.FailoverConfig{
+			Enabled:         true,
+			DefaultCooldown: time.Second,
+		},
 	}
 
 	gm := endpoint.NewGroupManager(cfg)
@@ -603,6 +635,10 @@ func BenchmarkGroupNotificationBroadcast(b *testing.B) {
 		Group: config.GroupConfig{
 			Cooldown:                time.Second,
 			AutoSwitchBetweenGroups: true,
+		},
+		Failover: config.FailoverConfig{
+			Enabled:         true,
+			DefaultCooldown: time.Second,
 		},
 	}
 

@@ -11,9 +11,13 @@ export function BatchUpdateSettings(arg1:main.BatchUpdateSettingsInput):Promise<
 
 export function CheckPortAvailable(arg1:number):Promise<boolean>;
 
+export function CreateChannel(arg1:main.CreateChannelInput):Promise<void>;
+
 export function CreateEndpointRecord(arg1:main.CreateEndpointInput):Promise<void>;
 
 export function CreateModelPricing(arg1:main.CreateModelPricingInput):Promise<void>;
+
+export function DeleteChannel(arg1:string,arg2:boolean):Promise<void>;
 
 export function DeleteEndpointRecord(arg1:string):Promise<void>;
 

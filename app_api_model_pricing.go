@@ -54,14 +54,15 @@ type ModelPricingStorageStatus struct {
 
 // GetModelPricingStorageStatus 获取模型定价存储状态
 func (a *App) GetModelPricingStorageStatus() ModelPricingStorageStatus {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-
 	status := ModelPricingStorageStatus{
 		Enabled: false,
 	}
+	a.ensureModelPricingService()
+	a.mu.RLock()
+	modelPricingService := a.modelPricingService
+	a.mu.RUnlock()
 
-	if a.modelPricingService == nil {
+	if modelPricingService == nil {
 		return status
 	}
 
@@ -70,12 +71,12 @@ func (a *App) GetModelPricingStorageStatus() ModelPricingStorageStatus {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	count, err := a.modelPricingService.GetPricingCount(ctx)
+	count, err := modelPricingService.GetPricingCount(ctx)
 	if err == nil {
 		status.TotalCount = count
 	}
 
-	defaultPricing := a.modelPricingService.GetDefaultPricing(ctx)
+	defaultPricing := modelPricingService.GetDefaultPricing(ctx)
 	status.HasDefault = defaultPricing != nil
 
 	return status
@@ -83,17 +84,19 @@ func (a *App) GetModelPricingStorageStatus() ModelPricingStorageStatus {
 
 // GetModelPricings 获取所有模型定价
 func (a *App) GetModelPricings() ([]ModelPricingInfo, error) {
+	a.ensureModelPricingService()
 	a.mu.RLock()
-	defer a.mu.RUnlock()
+	modelPricingService := a.modelPricingService
+	a.mu.RUnlock()
 
-	if a.modelPricingService == nil {
-		return nil, fmt.Errorf("模型定价服务未启用 (需要设置 usage_tracking.enabled: true)")
+	if modelPricingService == nil {
+		return nil, fmt.Errorf("模型定价服务未就绪，请稍后重试")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	records, err := a.modelPricingService.ListPricings(ctx)
+	records, err := modelPricingService.ListPricings(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("获取模型定价列表失败: %w", err)
 	}
@@ -108,17 +111,19 @@ func (a *App) GetModelPricings() ([]ModelPricingInfo, error) {
 
 // GetModelPricing 获取单个模型定价
 func (a *App) GetModelPricing(modelName string) (ModelPricingInfo, error) {
+	a.ensureModelPricingService()
 	a.mu.RLock()
-	defer a.mu.RUnlock()
+	modelPricingService := a.modelPricingService
+	a.mu.RUnlock()
 
-	if a.modelPricingService == nil {
-		return ModelPricingInfo{}, fmt.Errorf("模型定价服务未启用")
+	if modelPricingService == nil {
+		return ModelPricingInfo{}, fmt.Errorf("模型定价服务未就绪，请稍后重试")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	record, err := a.modelPricingService.GetPricing(ctx, modelName)
+	record, err := modelPricingService.GetPricing(ctx, modelName)
 	if err != nil {
 		return ModelPricingInfo{}, fmt.Errorf("获取模型定价失败: %w", err)
 	}
@@ -131,11 +136,14 @@ func (a *App) GetModelPricing(modelName string) (ModelPricingInfo, error) {
 
 // CreateModelPricing 创建新模型定价
 func (a *App) CreateModelPricing(input CreateModelPricingInput) error {
+	a.ensureModelPricingService()
 	a.mu.RLock()
-	defer a.mu.RUnlock()
+	modelPricingService := a.modelPricingService
+	logger := a.logger
+	a.mu.RUnlock()
 
-	if a.modelPricingService == nil {
-		return fmt.Errorf("模型定价服务未启用")
+	if modelPricingService == nil {
+		return fmt.Errorf("模型定价服务未就绪，请稍后重试")
 	}
 
 	// 设置默认值
@@ -170,13 +178,13 @@ func (a *App) CreateModelPricing(input CreateModelPricingInput) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	_, err := a.modelPricingService.CreatePricing(ctx, record)
+	_, err := modelPricingService.CreatePricing(ctx, record)
 	if err != nil {
 		return fmt.Errorf("创建模型定价失败: %w", err)
 	}
 
-	if a.logger != nil {
-		a.logger.Info("✅ 模型定价已创建", "model", input.ModelName)
+	if logger != nil {
+		logger.Info("✅ 模型定价已创建", "model", input.ModelName)
 	}
 
 	return nil
@@ -184,11 +192,14 @@ func (a *App) CreateModelPricing(input CreateModelPricingInput) error {
 
 // UpdateModelPricing 更新模型定价
 func (a *App) UpdateModelPricing(modelName string, input CreateModelPricingInput) error {
+	a.ensureModelPricingService()
 	a.mu.RLock()
-	defer a.mu.RUnlock()
+	modelPricingService := a.modelPricingService
+	logger := a.logger
+	a.mu.RUnlock()
 
-	if a.modelPricingService == nil {
-		return fmt.Errorf("模型定价服务未启用")
+	if modelPricingService == nil {
+		return fmt.Errorf("模型定价服务未就绪，请稍后重试")
 	}
 
 	record := &store.ModelPricingRecord{
@@ -206,12 +217,12 @@ func (a *App) UpdateModelPricing(modelName string, input CreateModelPricingInput
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	if err := a.modelPricingService.UpdatePricing(ctx, record); err != nil {
+	if err := modelPricingService.UpdatePricing(ctx, record); err != nil {
 		return fmt.Errorf("更新模型定价失败: %w", err)
 	}
 
-	if a.logger != nil {
-		a.logger.Info("✅ 模型定价已更新", "model", modelName)
+	if logger != nil {
+		logger.Info("✅ 模型定价已更新", "model", modelName)
 	}
 
 	return nil
@@ -219,22 +230,25 @@ func (a *App) UpdateModelPricing(modelName string, input CreateModelPricingInput
 
 // DeleteModelPricing 删除模型定价
 func (a *App) DeleteModelPricing(modelName string) error {
+	a.ensureModelPricingService()
 	a.mu.RLock()
-	defer a.mu.RUnlock()
+	modelPricingService := a.modelPricingService
+	logger := a.logger
+	a.mu.RUnlock()
 
-	if a.modelPricingService == nil {
-		return fmt.Errorf("模型定价服务未启用")
+	if modelPricingService == nil {
+		return fmt.Errorf("模型定价服务未就绪，请稍后重试")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	if err := a.modelPricingService.DeletePricing(ctx, modelName); err != nil {
+	if err := modelPricingService.DeletePricing(ctx, modelName); err != nil {
 		return fmt.Errorf("删除模型定价失败: %w", err)
 	}
 
-	if a.logger != nil {
-		a.logger.Info("✅ 模型定价已删除", "model", modelName)
+	if logger != nil {
+		logger.Info("✅ 模型定价已删除", "model", modelName)
 	}
 
 	return nil

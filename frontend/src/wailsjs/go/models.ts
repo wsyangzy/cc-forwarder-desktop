@@ -111,6 +111,7 @@ export namespace main {
 	}
 	export class ChannelInfo {
 	    name: string;
+	    website?: string;
 	    endpoint_count: number;
 	
 	    static createFrom(source: any = {}) {
@@ -120,6 +121,7 @@ export namespace main {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
+	        this.website = source["website"];
 	        this.endpoint_count = source["endpoint_count"];
 	    }
 	}
@@ -173,6 +175,20 @@ export namespace main {
 	        this.tracking_enabled = source["tracking_enabled"];
 	        this.failover_enabled = source["failover_enabled"];
 	        this.endpoint_count = source["endpoint_count"];
+	    }
+	}
+	export class CreateChannelInput {
+	    name: string;
+	    website?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new CreateChannelInput(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.website = source["website"];
 	    }
 	}
 	export class CreateEndpointInput {

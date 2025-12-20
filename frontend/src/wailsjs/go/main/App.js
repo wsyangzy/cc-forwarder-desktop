@@ -18,12 +18,20 @@ export function CheckPortAvailable(arg1) {
   return window['go']['main']['App']['CheckPortAvailable'](arg1);
 }
 
+export function CreateChannel(arg1) {
+  return window['go']['main']['App']['CreateChannel'](arg1);
+}
+
 export function CreateEndpointRecord(arg1) {
   return window['go']['main']['App']['CreateEndpointRecord'](arg1);
 }
 
 export function CreateModelPricing(arg1) {
   return window['go']['main']['App']['CreateModelPricing'](arg1);
+}
+
+export function DeleteChannel(arg1, arg2) {
+  return window['go']['main']['App']['DeleteChannel'](arg1, arg2);
 }
 
 export function DeleteEndpointRecord(arg1) {

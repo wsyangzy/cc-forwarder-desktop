@@ -44,10 +44,14 @@ import {
   deleteEndpointRecord,
   toggleEndpointRecord,
   setEndpointFailoverEnabled,
+  getChannels,
+  createChannel,
+  deleteChannel,
   getGroupsRaw,
   activateGroup,
   pauseGroup,
   resumeGroup,
+  getConfig,
   isWailsEnvironment,
   subscribeToEvent
 } from '@utils/wailsApi.js';
@@ -118,6 +122,70 @@ const DeleteConfirmDialog = ({ endpoint, onConfirm, onCancel, loading }) => (
     </div>
   </div>
 );
+
+const DeleteChannelConfirmDialog = ({ channelName, endpointCount = 0, onConfirm, onCancel, loading }) => {
+  const [alsoDeleteEndpoints, setAlsoDeleteEndpoints] = useState(false);
+
+  useEffect(() => {
+    setAlsoDeleteEndpoints(false);
+  }, [channelName]);
+
+  const requiresAlsoDelete = endpointCount > 0;
+  const confirmDisabled = loading || (requiresAlsoDelete && !alsoDeleteEndpoints);
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-start justify-center z-50 animate-fade-in pt-[20vh]">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="p-3 bg-rose-100 rounded-full">
+            <AlertTriangle className="text-rose-600" size={24} />
+          </div>
+          <div>
+            <h3 className="text-lg font-semibold text-slate-900">确认删除渠道</h3>
+            <p className="text-sm text-slate-500">此操作不可撤销</p>
+          </div>
+        </div>
+
+        <p className="text-slate-700 mb-4">
+          确定要删除渠道 <span className="font-semibold">"{channelName}"</span> 吗？
+        </p>
+
+        {endpointCount > 0 && (
+          <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-amber-800 text-sm mb-4">
+            <div className="font-medium">该渠道下仍有 {endpointCount} 个端点</div>
+            <label className="flex items-center gap-2 mt-2 select-none">
+              <input
+                type="checkbox"
+                checked={alsoDeleteEndpoints}
+                onChange={(e) => setAlsoDeleteEndpoints(e.target.checked)}
+                disabled={loading}
+              />
+              <span>同时删除该渠道下的所有端点</span>
+            </label>
+            <div className="text-xs text-amber-700 mt-2">
+              不勾选将不会执行删除（避免端点成为“孤儿数据”）。
+            </div>
+          </div>
+        )}
+
+        <div className="flex justify-end gap-3">
+          <Button variant="ghost" onClick={onCancel} disabled={loading}>
+            取消
+          </Button>
+          <Button
+            variant="danger"
+            icon={Trash2}
+            onClick={() => onConfirm?.({ deleteEndpoints: alsoDeleteEndpoints })}
+            loading={loading}
+            disabled={confirmDisabled}
+          >
+            确认删除
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 // ============================================
 // 端点表格行组件 (v5.0 增强版 - 参考 test.jsx 设计)
@@ -304,7 +372,7 @@ const EndpointMiniCard = ({
                       ? 'text-indigo-600 hover:bg-indigo-50'
                       : 'text-slate-400 hover:bg-slate-100'
                   }`}
-                  title={failoverEnabled ? '点击：不参与故障转移' : '点击：参与故障转移'}
+                  title={failoverEnabled ? '点击：不参与渠道内故障转移' : '点击：参与渠道内故障转移'}
                   aria-pressed={failoverEnabled}
                 >
                   <ArrowRightLeft size={14} />
@@ -350,7 +418,7 @@ const EndpointMiniCard = ({
           {!failoverEnabled && (
             <span className="inline-flex items-center text-[10px] text-slate-400 bg-slate-50 px-2 py-0.5 rounded border border-slate-200">
               <ArrowRightLeft size={10} className="mr-1" />
-              不参与故障转移
+              不参与渠道内故障转移
             </span>
           )}
           {supportsCountTokens && (
@@ -447,10 +515,10 @@ const EndpointDetailModal = ({
                     ? 'bg-indigo-50 text-indigo-700 border-indigo-100'
                     : 'bg-slate-50 text-slate-400 border-slate-200'
                 }`}
-                title={failoverEnabled ? '参与故障转移' : '不参与故障转移'}
+                title={failoverEnabled ? '参与渠道内故障转移' : '不参与渠道内故障转移'}
               >
                 <ArrowRightLeft size={10} className="mr-1" />
-                {failoverEnabled ? '故障转移' : '不参与转移'}
+                {failoverEnabled ? '渠道内故障转移' : '不参与转移'}
               </span>
 
               <span
@@ -599,20 +667,119 @@ const EndpointDetailModal = ({
 };
 
 // ============================================
+// 新建渠道弹窗（SQLite 模式）
+// ============================================
+
+const CreateChannelModal = ({ open, onClose, onSubmit, loading = false, serverError = '' }) => {
+  const [name, setName] = useState('');
+  const [website, setWebsite] = useState('');
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (!open) return;
+    setName('');
+    setWebsite('');
+    setError('');
+  }, [open]);
+
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 bg-slate-900/30 backdrop-blur-sm flex items-center justify-center p-4 z-[60]">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-xl max-h-[calc(100vh-2rem)] flex flex-col overflow-hidden">
+        <div className="flex items-start justify-between px-6 py-4 border-b border-slate-100">
+          <div>
+            <h2 className="text-lg font-semibold text-slate-900">新建渠道</h2>
+            <p className="text-xs text-slate-500 mt-1">先创建渠道，再在渠道卡片里添加端点</p>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700 rounded-lg transition-colors"
+            title="关闭"
+            disabled={loading}
+          >
+            <XCircle size={18} />
+          </button>
+        </div>
+
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            const trimmedName = name.trim();
+            if (!trimmedName) {
+              setError('请输入渠道名称');
+              return;
+            }
+            setError('');
+            onSubmit?.({ name: trimmedName, website: website.trim() });
+          }}
+          className="p-6 space-y-4"
+        >
+          {(error || serverError) && (
+            <div className="p-3 bg-rose-50 border border-rose-200 rounded-lg text-rose-700 text-sm">
+              {error || serverError}
+            </div>
+          )}
+
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-slate-700">
+                渠道名称 <span className="text-rose-500">*</span>
+              </label>
+              <input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="例如：official / backup / openai"
+                className="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                disabled={loading}
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-700">渠道官网</label>
+              <input
+                value={website}
+                onChange={(e) => setWebsite(e.target.value)}
+                placeholder="https://example.com (可选)"
+                className="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                disabled={loading}
+              />
+              <p className="text-xs text-slate-400 mt-1">用于渠道信息展示，非必填</p>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-end gap-2 pt-2">
+            <Button variant="ghost" type="button" onClick={onClose} disabled={loading}>
+              取消
+            </Button>
+            <Button icon={CheckCircle2} type="submit" loading={loading}>
+              创建渠道
+            </Button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};
+
+// ============================================
 // 渠道卡片组件
 // ============================================
 
 const ChannelCard = ({
   channelName,
   endpoints = [],
+  channelWebsite = '',
   groupInfo = null,
   activeChannelName = '',
   isSqliteMode = false,
+  channelFailoverEnabled = true,
   onActivate,
   onDeactivate,
   onPause,
   onResume,
   onAddEndpoint,
+  onDeleteChannel,
   onOpenEndpoint,
   onToggleEndpointFailover,
   onEditEndpoint,
@@ -623,6 +790,8 @@ const ChannelCard = ({
 
   const healthyCount = endpoints.filter(e => e.healthy).length;
   const totalCount = endpoints.length;
+  const hasEndpoints = totalCount > 0;
+  const hasGroupInfo = !!groupInfo;
 
   const isActive = isSqliteMode
     ? endpoints.some(e => e.enabled)
@@ -634,9 +803,13 @@ const ChannelCard = ({
 
   const visibleEndpoints = expanded ? endpoints : endpoints.slice(0, 2);
   const hasMore = endpoints.length > 2;
+  const pauseDisabled = loading || !channelFailoverEnabled;
 
   return (
-    <div className="bg-white rounded-2xl border border-slate-200/60 shadow-sm overflow-hidden h-full flex flex-col">
+    <div className={`
+      bg-white rounded-2xl border shadow-sm overflow-hidden h-full flex flex-col
+      ${isActive ? 'border-indigo-300 ring-2 ring-indigo-100' : 'border-slate-200/60'}
+    `}>
       {/* 渠道头部 */}
       <div className="px-6 py-4 border-b border-slate-100 flex items-start justify-between gap-4">
         <div className="min-w-0">
@@ -666,11 +839,22 @@ const ChannelCard = ({
           <div className="text-xs text-slate-500 mt-1">
             端点 {totalCount} · 健康 {healthyCount}/{totalCount} · 优先级 {priority ?? '-'}
           </div>
+          {channelWebsite && (
+            <a
+              href={channelWebsite}
+              target="_blank"
+              rel="noreferrer"
+              className="text-xs text-indigo-600 hover:text-indigo-700 hover:underline mt-1 inline-block truncate max-w-full"
+              title={channelWebsite}
+            >
+              {channelWebsite}
+            </a>
+          )}
         </div>
 
         {/* 渠道操作 */}
         <div className="flex items-center gap-2 flex-shrink-0">
-          {!isActive && (
+          {!isActive && isSqliteMode && hasEndpoints && (
             <Button
               size="sm"
               icon={Power}
@@ -691,27 +875,29 @@ const ChannelCard = ({
               停用
             </Button>
           )}
-          {!isPaused ? (
+          {hasGroupInfo && !isPaused ? (
             <Button
               size="sm"
               variant="ghost"
               icon={Pause}
               onClick={() => onPause?.(channelName)}
-              disabled={loading}
+              disabled={pauseDisabled}
+              title={!channelFailoverEnabled ? '已关闭渠道间故障转移：不可暂停渠道' : undefined}
             >
               暂停
             </Button>
-          ) : (
+          ) : hasGroupInfo ? (
             <Button
               size="sm"
               variant="ghost"
               icon={Play}
               onClick={() => onResume?.(channelName)}
-              disabled={loading}
+              disabled={pauseDisabled}
+              title={!channelFailoverEnabled ? '已关闭渠道间故障转移：不可恢复渠道' : undefined}
             >
               恢复
             </Button>
-          )}
+          ) : null}
           {isSqliteMode && (
             <Button
               size="sm"
@@ -722,6 +908,18 @@ const ChannelCard = ({
             >
               添加端点
             </Button>
+          )}
+          {isSqliteMode && (
+            <button
+              onClick={() => onDeleteChannel?.(channelName)}
+              disabled={loading}
+              className={`p-2 rounded-lg transition-colors ${
+                loading ? 'text-slate-300 cursor-not-allowed' : 'text-slate-400 hover:bg-rose-50 hover:text-rose-600'
+              }`}
+              title="删除渠道"
+            >
+              <Trash2 size={16} />
+            </button>
           )}
         </div>
       </div>
@@ -777,7 +975,15 @@ const ChannelCard = ({
 // ============================================
 
 const EndpointsPage = () => {
-  // 使用端点数据 Hook
+  // 存储模式状态
+  const [storageStatus, setStorageStatus] = useState(null);
+  const [storageEndpoints, setStorageEndpoints] = useState([]);
+  const [storageLoading, setStorageLoading] = useState(false);
+
+  // 判断存储模式（用于控制 Hook 行为）
+  const isSqliteMode = storageStatus?.storageType === 'sqlite' && storageStatus?.enabled;
+
+  // 使用端点数据 Hook（YAML 模式需要；SQLite 模式仅保留操作能力，避免后台自动拉取/订阅导致卡住）
   const {
     endpoints,
     loading,
@@ -787,29 +993,32 @@ const EndpointsPage = () => {
     performBatchHealthCheckAll,
     sseConnectionStatus,
     lastUpdate
-  } = useEndpointsData();
-
-  // 存储模式状态
-  const [storageStatus, setStorageStatus] = useState(null);
-  const [storageEndpoints, setStorageEndpoints] = useState([]);
+  } = useEndpointsData({ enabled: storageStatus ? !isSqliteMode : false });
 
   // 渠道（组）状态
   const [groups, setGroups] = useState([]);
   const [channelActionLoading, setChannelActionLoading] = useState(false);
+  const [channelFailoverEnabled, setChannelFailoverEnabled] = useState(true);
+  const [channelsMeta, setChannelsMeta] = useState([]);
 
   // 批量检测状态
   const [batchCheckLoading, setBatchCheckLoading] = useState(false);
 
   // 表单状态
   const [showForm, setShowForm] = useState(false);
+  const [showCreateChannel, setShowCreateChannel] = useState(false);
+  const [createChannelError, setCreateChannelError] = useState('');
   const [editingEndpoint, setEditingEndpoint] = useState(null);
   const [defaultChannel, setDefaultChannel] = useState('');
   const [lockChannel, setLockChannel] = useState(false);
   const [formLoading, setFormLoading] = useState(false);
+  const [channelFormLoading, setChannelFormLoading] = useState(false);
 
   // 删除确认状态
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
+  const [deleteChannelTarget, setDeleteChannelTarget] = useState(null);
+  const [deleteChannelLoading, setDeleteChannelLoading] = useState(false);
 
   // 端点详情弹窗
   const [detailTarget, setDetailTarget] = useState(null);
@@ -827,6 +1036,7 @@ const EndpointsPage = () => {
 
   // 加载存储状态
   const loadStorageStatus = useCallback(async () => {
+    setStorageLoading(true);
     try {
       const status = await getEndpointStorageStatus();
       setStorageStatus(status);
@@ -840,6 +1050,8 @@ const EndpointsPage = () => {
       console.error('获取存储状态失败:', err);
       // 默认使用 YAML 模式
       setStorageStatus({ enabled: false, storageType: 'yaml' });
+    } finally {
+      setStorageLoading(false);
     }
   }, []);
 
@@ -856,6 +1068,31 @@ const EndpointsPage = () => {
     } catch (err) {
       console.error('获取渠道状态失败:', err);
       setGroups([]);
+    }
+  }, []);
+
+  const loadChannelsMeta = useCallback(async () => {
+    const sqliteEnabled = storageStatus?.storageType === 'sqlite' && storageStatus?.enabled;
+    if (!sqliteEnabled) {
+      setChannelsMeta([]);
+      return;
+    }
+    try {
+      const list = await getChannels();
+      setChannelsMeta(Array.isArray(list) ? list : []);
+    } catch (err) {
+      console.error('获取渠道列表失败:', err);
+      // 避免瞬时失败导致 UI “清空”，保留上一次结果
+    }
+  }, [storageStatus]);
+
+  const loadConfig = useCallback(async () => {
+    try {
+      const cfg = await getConfig();
+      setChannelFailoverEnabled(cfg?.failover_enabled !== false);
+    } catch (err) {
+      console.error('获取配置失败:', err);
+      setChannelFailoverEnabled(true);
     }
   }, []);
 
@@ -878,6 +1115,20 @@ const EndpointsPage = () => {
     loadGroups();
   }, [loadGroups]);
 
+  useEffect(() => {
+    loadConfig();
+  }, [loadConfig]);
+
+  useEffect(() => {
+    loadChannelsMeta();
+  }, [loadChannelsMeta]);
+
+  useEffect(() => {
+    if (showCreateChannel) {
+      setCreateChannelError('');
+    }
+  }, [showCreateChannel]);
+
   // SQLite 模式下监听 Wails 事件，实时刷新端点数据
   const isSqliteModeRef = useRef(false);
   useEffect(() => {
@@ -894,6 +1145,7 @@ const EndpointsPage = () => {
         console.log('📡 [Endpoints] 收到端点更新事件，刷新 SQLite 数据');
         loadStorageStatus();
         loadGroups();
+        loadChannelsMeta();
       }
     });
 
@@ -902,7 +1154,7 @@ const EndpointsPage = () => {
         unsubscribe();
       }
     };
-  }, [loadStorageStatus]);
+  }, [loadChannelsMeta, loadGroups, loadStorageStatus]);
 
   // 批量健康检测处理
   const handleBatchHealthCheck = async () => {
@@ -924,9 +1176,6 @@ const EndpointsPage = () => {
     }
   };
 
-  // 判断存储模式
-  const isSqliteMode = storageStatus?.storageType === 'sqlite' && storageStatus?.enabled;
-
   // 获取要显示的端点列表
   const displayEndpoints = isSqliteMode ? storageEndpoints : endpoints;
 
@@ -946,12 +1195,16 @@ const EndpointsPage = () => {
 
   const channelOptions = useMemo(() => {
     const set = new Set();
+    channelsMeta.forEach((c) => {
+      const name = c?.name || '';
+      if (name) set.add(name);
+    });
     displayEndpoints.forEach((e) => {
       const c = e.group || e.channel || '';
       if (c) set.add(c);
     });
     return Array.from(set).sort();
-  }, [displayEndpoints]);
+  }, [channelsMeta, displayEndpoints]);
 
   const groupInfoMap = useMemo(() => {
     const map = new Map();
@@ -964,18 +1217,27 @@ const EndpointsPage = () => {
   const channelSections = useMemo(() => {
     const getChannelKey = (ep) => ep.group || ep.channel || ep.name || 'default';
     const map = new Map();
+    if (isSqliteMode) {
+      channelOptions.forEach((name) => map.set(name, []));
+    }
     displayEndpoints.forEach((ep) => {
       const key = getChannelKey(ep);
       if (!map.has(key)) map.set(key, []);
       map.get(key).push(ep);
     });
 
+    const websiteMap = new Map();
+    channelsMeta.forEach((c) => {
+      if (c?.name) websiteMap.set(c.name, c.website || '');
+    });
+
     const sections = Array.from(map.entries()).map(([name, eps]) => {
       const gi = groupInfoMap.get(name) || null;
-      const computedPriority = Math.min(...eps.map(e => e.priority || 999));
+      const computedPriority = eps.length > 0 ? Math.min(...eps.map(e => e.priority || 999)) : 999;
       const priority = gi?.priority ?? (Number.isFinite(computedPriority) ? computedPriority : 999);
       return {
         name,
+        website: websiteMap.get(name) || '',
         endpoints: eps.sort((a, b) => (a.priority ?? 999) - (b.priority ?? 999)),
         groupInfo: gi,
         sortPriority: priority ?? 999
@@ -983,7 +1245,7 @@ const EndpointsPage = () => {
     });
 
     return sections.sort((a, b) => (a.sortPriority - b.sortPriority) || a.name.localeCompare(b.name));
-  }, [displayEndpoints, groupInfoMap]);
+  }, [channelOptions, channelsMeta, displayEndpoints, groupInfoMap, isSqliteMode]);
 
   // 计算统计数据
   const displayStats = isSqliteMode
@@ -1009,6 +1271,32 @@ const EndpointsPage = () => {
     setShowForm(true);
   };
 
+  const handleCreateChannel = useCallback(async (payload) => {
+    try {
+      setChannelFormLoading(true);
+      setCreateChannelError('');
+
+      await createChannel(payload);
+
+      // 乐观更新：即使后续刷新失败，也能立刻看到新渠道
+      setChannelsMeta((prev) => {
+        const name = (payload?.name || '').trim();
+        if (!name) return prev;
+        if (prev.some((c) => c?.name === name)) return prev;
+        const next = [...prev, { name, website: (payload?.website || '').trim(), endpointCount: 0 }];
+        return next.sort((a, b) => (a?.name || '').localeCompare(b?.name || ''));
+      });
+
+      setShowCreateChannel(false);
+      await loadChannelsMeta();
+    } catch (err) {
+      console.error('创建渠道失败:', err);
+      setCreateChannelError(err?.message || '创建渠道失败');
+    } finally {
+      setChannelFormLoading(false);
+    }
+  }, [loadChannelsMeta]);
+
   // 编辑端点
   const handleEdit = (endpoint) => {
     setEditingEndpoint(endpoint);
@@ -1019,6 +1307,14 @@ const EndpointsPage = () => {
   const handleDelete = (endpoint) => {
     setDeleteTarget(endpoint);
   };
+
+  const handleDeleteChannel = useCallback((channelName) => {
+    const section = channelSections.find((s) => s.name === channelName);
+    setDeleteChannelTarget({
+      name: channelName,
+      endpointCount: section?.endpoints?.length || 0
+    });
+  }, [channelSections]);
 
   // 保存端点
   const handleSave = async (formData) => {
@@ -1077,8 +1373,12 @@ const EndpointsPage = () => {
   }
 
   // 加载状态
-  if (loading && displayEndpoints.length === 0 && !storageStatus) {
-    return <LoadingSpinner text="加载端点数据..." />;
+  if (!storageStatus) {
+    return <LoadingSpinner text="加载渠道数据..." />;
+  }
+
+  if ((storageLoading || (!isSqliteMode && loading)) && channelSections.length === 0) {
+    return <LoadingSpinner text="加载渠道数据..." />;
   }
 
   return (
@@ -1135,17 +1435,15 @@ const EndpointsPage = () => {
             检测全部
           </Button>
 
-          {/* 新建端点按钮 (SQLite 模式) */}
+          {/* 新建渠道按钮 (SQLite 模式) */}
           {isSqliteMode && (
             <Button
-              icon={Server}
+              icon={Plus}
               onClick={() => {
-                setDefaultChannel('');
-                setLockChannel(false);
-                handleCreate();
+                setShowCreateChannel(true);
               }}
             >
-              添加端点
+              添加渠道
             </Button>
           )}
         </div>
@@ -1197,16 +1495,14 @@ const EndpointsPage = () => {
           {isSqliteMode ? (
             <div className="flex flex-col items-center gap-3">
               <Database size={40} className="text-slate-300" />
-              <p>暂无端点配置</p>
+              <p>暂无渠道配置</p>
               <Button
-                icon={Server}
+                icon={Plus}
                 onClick={() => {
-                  setDefaultChannel('');
-                  setLockChannel(false);
-                  handleCreate();
+                  setShowCreateChannel(true);
                 }}
               >
-                添加第一个端点
+                添加第一个渠道
               </Button>
             </div>
           ) : (
@@ -1220,9 +1516,11 @@ const EndpointsPage = () => {
               key={section.name}
               channelName={section.name}
               endpoints={section.endpoints}
+              channelWebsite={section.website}
               groupInfo={section.groupInfo}
               activeChannelName={activeChannel}
               isSqliteMode={isSqliteMode}
+              channelFailoverEnabled={channelFailoverEnabled}
               loading={channelActionLoading}
               onOpenEndpoint={openEndpointDetail}
               onToggleEndpointFailover={isSqliteMode ? handleToggleEndpointFailover : undefined}
@@ -1291,6 +1589,7 @@ const EndpointsPage = () => {
                 setLockChannel(true);
                 handleCreate();
               }}
+              onDeleteChannel={handleDeleteChannel}
               onEditEndpoint={(ep) => {
                 closeEndpointDetail();
                 setDefaultChannel('');
@@ -1324,6 +1623,14 @@ const EndpointsPage = () => {
         />
       )}
 
+      <CreateChannelModal
+        open={showCreateChannel && isSqliteMode}
+        loading={channelFormLoading}
+        serverError={createChannelError}
+        onClose={() => setShowCreateChannel(false)}
+        onSubmit={handleCreateChannel}
+      />
+
       {/* 删除确认弹窗 */}
       {deleteTarget && (
         <DeleteConfirmDialog
@@ -1331,6 +1638,30 @@ const EndpointsPage = () => {
           onConfirm={handleConfirmDelete}
           onCancel={() => setDeleteTarget(null)}
           loading={deleteLoading}
+        />
+      )}
+
+      {deleteChannelTarget && (
+        <DeleteChannelConfirmDialog
+          channelName={deleteChannelTarget.name}
+          endpointCount={deleteChannelTarget.endpointCount}
+          loading={deleteChannelLoading}
+          onCancel={() => setDeleteChannelTarget(null)}
+          onConfirm={async ({ deleteEndpoints }) => {
+            try {
+              setDeleteChannelLoading(true);
+              await deleteChannel(deleteChannelTarget.name, deleteEndpoints);
+              setDeleteChannelTarget(null);
+              await loadStorageStatus();
+              await loadGroups();
+              await loadChannelsMeta();
+            } catch (err) {
+              console.error('删除渠道失败:', err);
+              alert(`删除渠道失败: ${err.message}`);
+            } finally {
+              setDeleteChannelLoading(false);
+            }
+          }}
         />
       )}
 

@@ -23,7 +23,9 @@ import {
  * - SSE 实时更新
  * - API 交互方法 (健康检测、优先级更新、Key 切换等)
  */
-const useEndpointsData = () => {
+const useEndpointsData = (options = {}) => {
+  const { enabled = true } = options;
+
   const [data, setData] = useState({
     endpoints: [],
     total: 0,
@@ -100,6 +102,7 @@ const useEndpointsData = () => {
 
   // 加载端点数据
   const loadData = useCallback(async () => {
+    if (!enabled) return;
     try {
       if (!isInitialized) {
         setData(prev => ({ ...prev, loading: true, error: null }));
@@ -128,10 +131,11 @@ const useEndpointsData = () => {
         error: error.message || '端点数据加载失败'
       }));
     }
-  }, [isInitialized, calculateStats]);
+  }, [enabled, isInitialized, calculateStats]);
 
   // 加载 Key 概览数据
   const loadKeysOverview = useCallback(async () => {
+    if (!enabled) return null;
     try {
       // 使用 API 适配层（自动检测 Wails 环境）
       const responseData = await apiFetchKeysOverview();
@@ -141,7 +145,7 @@ const useEndpointsData = () => {
       console.error('❌ Key 概览加载失败:', error);
       return null;
     }
-  }, []);
+  }, [enabled]);
 
   // 更新端点优先级
   const updatePriority = useCallback(async (endpointName, newPriority) => {
@@ -280,12 +284,14 @@ const useEndpointsData = () => {
 
   // 初始化
   useEffect(() => {
+    if (!enabled) return;
     loadData();
     loadKeysOverview();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [enabled, loadData, loadKeysOverview]);
 
   // SSE 失败后定时刷新
   useEffect(() => {
+    if (!enabled) return;
     let interval = null;
     if (connectionStatus === 'failed' || connectionStatus === 'error') {
       interval = setInterval(loadData, 15000);
@@ -293,7 +299,7 @@ const useEndpointsData = () => {
     return () => {
       if (interval) clearInterval(interval);
     };
-  }, [connectionStatus, loadData]);
+  }, [enabled, connectionStatus, loadData]);
 
   return {
     // 数据状态

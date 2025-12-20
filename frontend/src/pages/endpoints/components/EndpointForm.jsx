@@ -375,11 +375,11 @@ const EndpointForm = ({
 
             <div className="flex gap-6">
               <FormCheckbox
-                label="参与故障转移"
+                label="参与渠道内故障转移"
                 name="failoverEnabled"
                 checked={formData.failoverEnabled}
                 onChange={handleChange}
-                help="当此端点不可用时自动切换"
+                help="关闭后该端点不会参与同一渠道内的端点故障转移"
               />
 
               <FormCheckbox

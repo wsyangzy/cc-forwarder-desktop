@@ -214,6 +214,10 @@ func TestGetEndpointByNameWithGroups(t *testing.T) {
 			Cooldown:                10 * time.Minute,
 			AutoSwitchBetweenGroups: true, // Enable auto switching for this test
 		},
+		Failover: config.FailoverConfig{
+			Enabled:         true,
+			DefaultCooldown: 10 * time.Minute,
+		},
 		Endpoints: []config.EndpointConfig{
 			{
 				Name:     "primary-endpoint",
@@ -371,6 +375,10 @@ func TestGroupEventBusPublish(t *testing.T) {
 			Cooldown:                10 * time.Minute,
 			AutoSwitchBetweenGroups: true,
 		},
+		Failover: config.FailoverConfig{
+			Enabled:         true,
+			DefaultCooldown: 10 * time.Minute,
+		},
 		Endpoints: []config.EndpointConfig{
 			{
 				Name:     "test-endpoint",
@@ -506,6 +514,10 @@ func TestGroupEventBusIntegration(t *testing.T) {
 		Group: config.GroupConfig{
 			Cooldown:                10 * time.Minute,
 			AutoSwitchBetweenGroups: true,
+		},
+		Failover: config.FailoverConfig{
+			Enabled:         true,
+			DefaultCooldown: 10 * time.Minute,
 		},
 		Endpoints: []config.EndpointConfig{
 			{

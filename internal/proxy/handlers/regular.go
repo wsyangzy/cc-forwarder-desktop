@@ -294,8 +294,23 @@ func (rh *RegularHandler) HandleRegularRequestUnified(ctx context.Context, w htt
 		if len(endpoints) > 0 {
 			lastEndpoint := endpoints[len(endpoints)-1]
 
-			newChannel, err := rh.endpointManager.TriggerRequestFailover(
-				lastEndpoint.Config.Name,
+			// v6.0+：跨渠道切换时，将本次请求中失败过的端点统一进入冷却，避免下一次请求立即重复撞同一批端点
+			failedEndpointNames := make([]string, 0, len(endpoints))
+			seen := make(map[string]struct{}, len(endpoints))
+			for _, ep := range endpoints {
+				name := ep.Config.Name
+				if name == "" {
+					continue
+				}
+				if _, ok := seen[name]; ok {
+					continue
+				}
+				seen[name] = struct{}{}
+				failedEndpointNames = append(failedEndpointNames, name)
+			}
+
+			newChannel, err := rh.endpointManager.TriggerRequestFailoverWithFailedEndpoints(
+				failedEndpointNames,
 				"all_retries_exhausted",
 			)
 

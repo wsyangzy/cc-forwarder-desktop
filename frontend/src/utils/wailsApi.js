@@ -870,8 +870,33 @@ export const getChannels = async () => {
   const channels = await WailsApp.GetChannels();
   return (channels || []).map(c => ({
     name: c.name,
+    website: c.website || '',
     endpointCount: c.endpoint_count
   }));
+};
+
+export const createChannel = async (input) => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+
+  const payload = {
+    name: (input?.name || '').trim(),
+    website: (input?.website || '').trim()
+  };
+
+  await WailsApp.CreateChannel(payload);
+  return { success: true };
+};
+
+export const deleteChannel = async (name, deleteEndpoints = false) => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+
+  const channelName = (name || '').trim();
+  if (!channelName) throw new Error('渠道名称不能为空');
+
+  await WailsApp.DeleteChannel(channelName, !!deleteEndpoints);
+  return { success: true };
 };
 
 /**

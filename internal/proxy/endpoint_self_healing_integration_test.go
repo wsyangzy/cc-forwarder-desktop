@@ -21,13 +21,17 @@ func TestEndpointSelfHealingIntegration(t *testing.T) {
 		// 1. 设置测试环境
 		cfg := &config.Config{
 			RequestSuspend: config.RequestSuspendConfig{
-				Enabled:                true,
-				Timeout:                5 * time.Second,
-				MaxSuspendedRequests:   10,
+				Enabled:              true,
+				Timeout:              5 * time.Second,
+				MaxSuspendedRequests: 10,
 			},
 			Group: config.GroupConfig{
 				AutoSwitchBetweenGroups: false, // 手动模式，启用挂起
 				Cooldown:                10 * time.Second,
+			},
+			Failover: config.FailoverConfig{
+				Enabled:         false,
+				DefaultCooldown: 10 * time.Second,
 			},
 			Endpoints: []config.EndpointConfig{
 				{

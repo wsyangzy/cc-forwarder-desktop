@@ -160,7 +160,7 @@ func (sh *StreamingHandler) executeStreamingWithRetry(ctx context.Context, w htt
 
 	// 🔧 [重试逻辑修复] 对每个端点进行max_attempts次重试，而不是只尝试一次
 	// 尝试端点直到成功
-	var lastErr error // 声明在外层作用域，供最终错误处理使用
+	var lastErr error           // 声明在外层作用域，供最终错误处理使用
 	var lastResp *http.Response // 🔧 [修复] 添加lastResp变量，用于获取真实HTTP状态码
 	// 🔢 [重构] 移除currentAttemptCount变量，统一由LifecycleManager管理计数
 	for i := 0; i < len(endpoints); i++ {
@@ -179,7 +179,7 @@ func (sh *StreamingHandler) executeStreamingWithRetry(ctx context.Context, w htt
 
 		// ✅ [同端点重试] 对当前端点进行max_attempts次重试
 		endpointSuccess := false
-		var attempt int // 声明在外部，循环结束后仍可访问
+		var attempt int                 // 声明在外部，循环结束后仍可访问
 		var lastDecision *RetryDecision // 保存最后的重试决策，用于外层逻辑
 
 		for attempt = 1; attempt <= sh.config.Retry.MaxAttempts; attempt++ {
@@ -369,7 +369,7 @@ func (sh *StreamingHandler) executeStreamingWithRetry(ctx context.Context, w htt
 			// attempt: 当前端点内的尝试次数，用于退避计算
 			// globalAttemptCount: 全局尝试次数，用于限流策略
 			decision := retryMgr.ShouldRetryWithDecision(&errorCtx, attempt, globalAttemptCount, true) // 流式请求: isStreaming=true
-			lastDecision = &decision // 保存决策，供外层逻辑使用
+			lastDecision = &decision                                                                   // 保存决策，供外层逻辑使用
 
 			// 检查决策结果
 			if decision.FinalStatus == "cancelled" {
@@ -569,8 +569,23 @@ func (sh *StreamingHandler) executeStreamingWithRetry(ctx context.Context, w htt
 
 	// 🔄 [请求级故障转移] 所有端点都失败了，尝试触发故障转移
 	if lastFailedEndpoint != "" {
-		newChannel, err := sh.endpointManager.TriggerRequestFailover(
-			lastFailedEndpoint,
+		// v6.0+：跨渠道切换时，将本次请求中失败过的端点统一进入冷却，避免下一次请求立即重复撞同一批端点
+		failedEndpointNames := make([]string, 0, len(endpoints))
+		seen := make(map[string]struct{}, len(endpoints))
+		for _, ep := range endpoints {
+			name := ep.Config.Name
+			if name == "" {
+				continue
+			}
+			if _, ok := seen[name]; ok {
+				continue
+			}
+			seen[name] = struct{}{}
+			failedEndpointNames = append(failedEndpointNames, name)
+		}
+
+		newChannel, err := sh.endpointManager.TriggerRequestFailoverWithFailedEndpoints(
+			failedEndpointNames,
 			"all_retries_exhausted",
 		)
 
@@ -634,12 +649,12 @@ func (sh *StreamingHandler) executeStreamingWithRetry(ctx context.Context, w htt
 
 				// 🔧 [生命周期修复] 恢复时必须更新生命周期管理器的端点信息
 				// 设置第一个新端点的信息到生命周期管理器
-					firstEndpoint := newEndpoints[0]
-					firstRouteGroup := firstEndpoint.Config.Channel
-					if firstRouteGroup == "" {
-						firstRouteGroup = firstEndpoint.Config.Name
-					}
-					lifecycleManager.SetEndpoint(firstEndpoint.Config.Name, firstRouteGroup, firstEndpoint.Config.Channel)
+				firstEndpoint := newEndpoints[0]
+				firstRouteGroup := firstEndpoint.Config.Channel
+				if firstRouteGroup == "" {
+					firstRouteGroup = firstEndpoint.Config.Name
+				}
+				lifecycleManager.SetEndpoint(firstEndpoint.Config.Name, firstRouteGroup, firstEndpoint.Config.Channel)
 
 				// 重新获取健康端点并重新尝试（递归调用）
 				sh.executeStreamingWithRetry(ctx, w, r, bodyBytes, lifecycleManager, flusher)
