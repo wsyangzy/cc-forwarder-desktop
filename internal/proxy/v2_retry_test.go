@@ -26,20 +26,20 @@ func newMockEndpointServer(failCount int) *mockEndpointServer {
 	mes := &mockEndpointServer{
 		failCount: failCount,
 	}
-	
+
 	mes.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mes.mu.Lock()
 		mes.requestCount++
 		currentCount := mes.requestCount
 		mes.mu.Unlock()
-		
+
 		// 前failCount次请求返回错误
 		if currentCount <= mes.failCount {
 			w.WriteHeader(http.StatusInternalServerError)
 			w.Write([]byte(`{"error": "mock server error"}`))
 			return
 		}
-		
+
 		// 成功响应 - 模拟流式响应
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
@@ -52,7 +52,7 @@ func newMockEndpointServer(failCount int) *mockEndpointServer {
 		fmt.Fprint(w, "event: message_stop\n")
 		fmt.Fprint(w, "data: {}\n\n")
 	}))
-	
+
 	return mes
 }
 
@@ -70,30 +70,30 @@ func (mes *mockEndpointServer) close() {
 func TestV2StreamingRetryLogic(t *testing.T) {
 	tests := []struct {
 		name               string
-		maxAttempts        int    // 配置的最大重试次数
-		endpointFailCount  int    // 端点前N次请求失败
-		expectedRetryCount int    // 预期的总重试次数
-		expectSuccess      bool   // 预期是否最终成功
+		maxAttempts        int  // 配置的最大重试次数
+		endpointFailCount  int  // 端点前N次请求失败
+		expectedRetryCount int  // 预期的总重试次数
+		expectSuccess      bool // 预期是否最终成功
 	}{
 		{
 			name:               "第一次尝试成功",
 			maxAttempts:        3,
-			endpointFailCount:  0,  // 不失败
-			expectedRetryCount: 1,  // 只尝试1次
+			endpointFailCount:  0, // 不失败
+			expectedRetryCount: 1, // 只尝试1次
 			expectSuccess:      true,
 		},
 		{
 			name:               "第二次尝试成功",
 			maxAttempts:        3,
-			endpointFailCount:  1,  // 第1次失败，第2次成功
-			expectedRetryCount: 2,  // 尝试2次
+			endpointFailCount:  1, // 第1次失败，第2次成功
+			expectedRetryCount: 2, // 尝试2次
 			expectSuccess:      true,
 		},
 		{
 			name:               "第三次尝试成功",
 			maxAttempts:        3,
-			endpointFailCount:  2,  // 前2次失败，第3次成功
-			expectedRetryCount: 3,  // 尝试3次
+			endpointFailCount:  2, // 前2次失败，第3次成功
+			expectedRetryCount: 3, // 尝试3次
 			expectSuccess:      true,
 		},
 	}
@@ -103,7 +103,7 @@ func TestV2StreamingRetryLogic(t *testing.T) {
 			// 创建模拟服务器
 			mockServer := newMockEndpointServer(tt.endpointFailCount)
 			defer mockServer.close()
-			
+
 			// 创建配置
 			cfg := &config.Config{
 				Retry: config.RetryConfig{
@@ -114,6 +114,9 @@ func TestV2StreamingRetryLogic(t *testing.T) {
 				},
 				Group: config.GroupConfig{
 					AutoSwitchBetweenGroups: true,
+				},
+				Failover: config.FailoverConfig{
+					Enabled: true,
 				},
 				UsageTracking: config.UsageTrackingConfig{
 					Enabled: false, // 简化测试
@@ -132,10 +135,10 @@ func TestV2StreamingRetryLogic(t *testing.T) {
 
 			// 创建端点管理器
 			endpointManager := endpoint.NewManager(cfg)
-			
+
 			// 等待健康检查完成并强制标记为健康
 			time.Sleep(200 * time.Millisecond)
-			
+
 			// 手动标记端点为健康状态
 			endpoints := endpointManager.GetAllEndpoints()
 			for _, ep := range endpoints {
@@ -159,7 +162,7 @@ func TestV2StreamingRetryLogic(t *testing.T) {
 			// 执行请求（带超时上下文）
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			
+
 			req = req.WithContext(ctx)
 
 			// 执行处理
@@ -190,7 +193,7 @@ func TestV2StreamingRetryLogic(t *testing.T) {
 				if recorder.Code != http.StatusOK {
 					t.Errorf("预期成功但失败: 状态码 %d, 响应: %s", recorder.Code, recorder.Body.String())
 				}
-				
+
 				// 验证流式响应内容
 				responseBody := recorder.Body.String()
 				if !strings.Contains(responseBody, "event: message_start") {
@@ -222,7 +225,7 @@ func TestV2StreamingRetryWithMultipleEndpoints(t *testing.T) {
 	// 第二个端点：第1次请求成功
 	mockServer1 := newMockEndpointServer(3) // 前3次失败
 	defer mockServer1.close()
-	
+
 	mockServer2 := newMockEndpointServer(0) // 立即成功
 	defer mockServer2.close()
 
@@ -236,6 +239,9 @@ func TestV2StreamingRetryWithMultipleEndpoints(t *testing.T) {
 		},
 		Group: config.GroupConfig{
 			AutoSwitchBetweenGroups: true,
+		},
+		Failover: config.FailoverConfig{
+			Enabled: true,
 		},
 		UsageTracking: config.UsageTrackingConfig{
 			Enabled: false,
@@ -263,7 +269,7 @@ func TestV2StreamingRetryWithMultipleEndpoints(t *testing.T) {
 	// 创建端点管理器和处理器
 	endpointManager := endpoint.NewManager(cfg)
 	time.Sleep(200 * time.Millisecond) // 等待健康检查
-	
+
 	// 手动标记端点为健康状态
 	endpoints := endpointManager.GetAllEndpoints()
 	for _, ep := range endpoints {
@@ -271,7 +277,7 @@ func TestV2StreamingRetryWithMultipleEndpoints(t *testing.T) {
 		ep.Status.Healthy = true
 		ep.Status.LastCheck = time.Now()
 	}
-	
+
 	handler := NewHandler(endpointManager, cfg)
 
 	// 创建流式请求
@@ -306,7 +312,7 @@ func TestV2StreamingRetryWithMultipleEndpoints(t *testing.T) {
 	if endpoint1Requests != 3 {
 		t.Errorf("端点1重试次数错误: 预期 3, 实际 %d", endpoint1Requests)
 	}
-	
+
 	if endpoint2Requests != 1 {
 		t.Errorf("端点2请求次数错误: 预期 1, 实际 %d", endpoint2Requests)
 	}
@@ -320,5 +326,195 @@ func TestV2StreamingRetryWithMultipleEndpoints(t *testing.T) {
 	responseBody := recorder.Body.String()
 	if !strings.Contains(responseBody, "event: message_start") {
 		t.Errorf("多端点成功响应应包含流式数据: %s", responseBody)
+	}
+}
+
+// TestV2StreamingRetryWithinChannel 测试“同渠道内多端点故障转移”
+// 预期：渠道 A 内 endpoint-1 重试耗尽后切换到 endpoint-2 成功，不触发跨渠道切换
+func TestV2StreamingRetryWithinChannel(t *testing.T) {
+	// 渠道A：endpoint-1 前3次失败；endpoint-2 立即成功
+	mockServer1 := newMockEndpointServer(3)
+	defer mockServer1.close()
+	mockServer2 := newMockEndpointServer(0)
+	defer mockServer2.close()
+
+	// 渠道B：备用（本用例不应被使用）
+	mockServer3 := newMockEndpointServer(0)
+	defer mockServer3.close()
+
+	cfg := &config.Config{
+		Retry: config.RetryConfig{
+			MaxAttempts: 3,
+			BaseDelay:   10 * time.Millisecond,
+			MaxDelay:    100 * time.Millisecond,
+			Multiplier:  2.0,
+		},
+		Group: config.GroupConfig{
+			AutoSwitchBetweenGroups: true,
+		},
+		Failover: config.FailoverConfig{
+			Enabled: true,
+		},
+		UsageTracking: config.UsageTrackingConfig{
+			Enabled: false,
+		},
+		Endpoints: []config.EndpointConfig{
+			{
+				Name:     "endpoint-1",
+				URL:      mockServer1.server.URL,
+				Channel:  "channel-a",
+				Priority: 1,
+				Timeout:  5 * time.Second,
+				Token:    "test-token-1",
+			},
+			{
+				Name:     "endpoint-2",
+				URL:      mockServer2.server.URL,
+				Channel:  "channel-a",
+				Priority: 2,
+				Timeout:  5 * time.Second,
+				Token:    "test-token-2",
+			},
+			{
+				Name:     "endpoint-3",
+				URL:      mockServer3.server.URL,
+				Channel:  "channel-b",
+				Priority: 3,
+				Timeout:  5 * time.Second,
+				Token:    "test-token-3",
+			},
+		},
+	}
+
+	endpointManager := endpoint.NewManager(cfg)
+	time.Sleep(200 * time.Millisecond)
+
+	// 手动标记端点为健康状态
+	for _, ep := range endpointManager.GetAllEndpoints() {
+		ep.Status.Healthy = true
+		ep.Status.LastCheck = time.Now()
+		ep.Status.NeverChecked = false
+	}
+
+	handler := NewHandler(endpointManager, cfg)
+
+	req := httptest.NewRequest("POST", "/v1/messages", strings.NewReader(`{"message":"test channel failover"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	req = req.WithContext(ctx)
+
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("预期成功响应: got=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	// endpoint-1 被重试3次，endpoint-2 成功1次，endpoint-3 不应被使用
+	if got := mockServer1.getRequestCount(); got != 3 {
+		t.Errorf("endpoint-1 请求次数错误: got=%d want=3", got)
+	}
+	if got := mockServer2.getRequestCount(); got != 1 {
+		t.Errorf("endpoint-2 请求次数错误: got=%d want=1", got)
+	}
+	if got := mockServer3.getRequestCount(); got != 0 {
+		t.Errorf("endpoint-3 不应被使用: got=%d want=0", got)
+	}
+}
+
+// TestV2StreamingRetryCrossChannelAfterChannelExhausted 测试“同渠道耗尽后跨渠道切换”
+// 预期：渠道 A 内两个端点都重试耗尽后，切换到渠道 B 的端点成功
+func TestV2StreamingRetryCrossChannelAfterChannelExhausted(t *testing.T) {
+	// 渠道A：两个端点都前3次失败
+	mockServer1 := newMockEndpointServer(3)
+	defer mockServer1.close()
+	mockServer2 := newMockEndpointServer(3)
+	defer mockServer2.close()
+
+	// 渠道B：备用端点立即成功
+	mockServer3 := newMockEndpointServer(0)
+	defer mockServer3.close()
+
+	cfg := &config.Config{
+		Retry: config.RetryConfig{
+			MaxAttempts: 3,
+			BaseDelay:   10 * time.Millisecond,
+			MaxDelay:    100 * time.Millisecond,
+			Multiplier:  2.0,
+		},
+		Group: config.GroupConfig{
+			AutoSwitchBetweenGroups: true,
+		},
+		Failover: config.FailoverConfig{
+			Enabled: true,
+		},
+		UsageTracking: config.UsageTrackingConfig{
+			Enabled: false,
+		},
+		Endpoints: []config.EndpointConfig{
+			{
+				Name:     "endpoint-1",
+				URL:      mockServer1.server.URL,
+				Channel:  "channel-a",
+				Priority: 1,
+				Timeout:  5 * time.Second,
+				Token:    "test-token-1",
+			},
+			{
+				Name:     "endpoint-2",
+				URL:      mockServer2.server.URL,
+				Channel:  "channel-a",
+				Priority: 2,
+				Timeout:  5 * time.Second,
+				Token:    "test-token-2",
+			},
+			{
+				Name:     "endpoint-3",
+				URL:      mockServer3.server.URL,
+				Channel:  "channel-b",
+				Priority: 3,
+				Timeout:  5 * time.Second,
+				Token:    "test-token-3",
+			},
+		},
+	}
+
+	endpointManager := endpoint.NewManager(cfg)
+	time.Sleep(200 * time.Millisecond)
+
+	for _, ep := range endpointManager.GetAllEndpoints() {
+		ep.Status.Healthy = true
+		ep.Status.LastCheck = time.Now()
+		ep.Status.NeverChecked = false
+	}
+
+	handler := NewHandler(endpointManager, cfg)
+
+	req := httptest.NewRequest("POST", "/v1/messages", strings.NewReader(`{"message":"test cross channel failover"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	req = req.WithContext(ctx)
+
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("预期成功响应: got=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	if got := mockServer1.getRequestCount(); got != 3 {
+		t.Errorf("endpoint-1 请求次数错误: got=%d want=3", got)
+	}
+	if got := mockServer2.getRequestCount(); got != 3 {
+		t.Errorf("endpoint-2 请求次数错误: got=%d want=3", got)
+	}
+	if got := mockServer3.getRequestCount(); got != 1 {
+		t.Errorf("endpoint-3 请求次数错误: got=%d want=1", got)
 	}
 }

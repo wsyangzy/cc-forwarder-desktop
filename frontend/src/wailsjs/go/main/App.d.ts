@@ -11,9 +11,13 @@ export function BatchUpdateSettings(arg1:main.BatchUpdateSettingsInput):Promise<
 
 export function CheckPortAvailable(arg1:number):Promise<boolean>;
 
+export function CreateChannel(arg1:main.CreateChannelInput):Promise<void>;
+
 export function CreateEndpointRecord(arg1:main.CreateEndpointInput):Promise<void>;
 
 export function CreateModelPricing(arg1:main.CreateModelPricingInput):Promise<void>;
+
+export function DeleteChannel(arg1:string,arg2:boolean):Promise<void>;
 
 export function DeleteEndpointRecord(arg1:string):Promise<void>;
 
@@ -91,6 +95,8 @@ export function ResumeGroup(arg1:string):Promise<void>;
 
 export function SetDefaultModelPricing(arg1:string):Promise<void>;
 
+export function SetEndpointFailoverEnabled(arg1:string,arg2:boolean):Promise<void>;
+
 export function SetEndpointPriority(arg1:string,arg2:number):Promise<void>;
 
 export function StartLogStream():Promise<void>;
@@ -102,6 +108,8 @@ export function SwitchKey(arg1:string,arg2:string,arg3:number):Promise<main.Swit
 export function ToggleEndpointRecord(arg1:string,arg2:boolean):Promise<void>;
 
 export function TriggerHealthCheck(arg1:string):Promise<void>;
+
+export function UpdateChannel(arg1:main.UpdateChannelInput):Promise<void>;
 
 export function UpdateEndpointRecord(arg1:string,arg2:main.CreateEndpointInput):Promise<void>;
 

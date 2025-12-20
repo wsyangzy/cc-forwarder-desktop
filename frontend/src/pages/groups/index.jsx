@@ -6,7 +6,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { RefreshCw, Layers } from 'lucide-react';
 import { Button, LoadingSpinner, ErrorMessage } from '@components/ui';
-import { fetchGroups, activateGroup, pauseGroup } from '@utils/api.js';
+import { fetchGroups, activateGroup, pauseGroup, fetchConfig } from '@utils/api.js';
+import { getConfig, isWailsEnvironment } from '@utils/wailsApi.js';
 import { GroupCard, GroupTableRow, StatsOverview, ViewToggle } from './components';
 
 // ============================================
@@ -20,14 +21,19 @@ const GroupsPage = () => {
   const [actionLoading, setActionLoading] = useState(false);
   const [error, setError] = useState(null);
   const [viewMode, setViewMode] = useState('grid'); // 'grid' | 'list'
+  const [channelFailoverEnabled, setChannelFailoverEnabled] = useState(true);
 
   // ==================== 数据加载 ====================
   const loadGroups = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
-      const data = await fetchGroups();
+      const [data, config] = await Promise.all([
+        fetchGroups(),
+        isWailsEnvironment() ? getConfig() : fetchConfig()
+      ]);
       setGroups(data.groups || []);
+      setChannelFailoverEnabled(config?.failover_enabled !== false);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -127,6 +133,7 @@ const GroupsPage = () => {
                   group={group}
                   onActivate={handleActivate}
                   onPause={handlePause}
+                  channelFailoverEnabled={channelFailoverEnabled}
                   loading={actionLoading}
                 />
               ))}
@@ -169,6 +176,7 @@ const GroupsPage = () => {
                       group={group}
                       onActivate={handleActivate}
                       onPause={handlePause}
+                      channelFailoverEnabled={channelFailoverEnabled}
                       loading={actionLoading}
                     />
                   ))}

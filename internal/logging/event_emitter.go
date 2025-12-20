@@ -11,22 +11,24 @@ import (
 // EventEmitter Wails 事件发射器
 // 负责将日志通过 Wails Runtime Events 推送到前端
 type EventEmitter struct {
-	ctx       context.Context
-	enabled   bool
-	batchSize int           // 批量发送大小
-	buffer    []LogEntry    // 缓冲区
-	ticker    *time.Ticker  // 定时器
-	mu        sync.Mutex
-	stopChan  chan struct{}
-	stopped   bool          // 防止重复关闭
+	mu sync.Mutex
+
+	ctx     context.Context
+	enabled bool
+
+	batchSize     int
+	flushInterval time.Duration
+
+	queue    chan LogEntry
+	stopChan chan struct{}
+	doneChan chan struct{}
 }
 
 // NewEventEmitter 创建事件发射器
 func NewEventEmitter() *EventEmitter {
 	return &EventEmitter{
-		batchSize: 10,               // 每批最多10条
-		buffer:    make([]LogEntry, 0, 10),
-		stopChan:  make(chan struct{}),
+		batchSize:     10,                     // 每批最多10条
+		flushInterval: 100 * time.Millisecond, // 100ms刷新一次
 	}
 }
 
@@ -41,81 +43,127 @@ func (e *EventEmitter) Start(ctx context.Context) {
 
 	e.ctx = ctx
 	e.enabled = true
-	e.stopped = false // 重置停止标志
-	e.stopChan = make(chan struct{}) // 重新创建 channel
-	e.ticker = time.NewTicker(100 * time.Millisecond) // 100ms刷新一次
+	e.stopChan = make(chan struct{})
+	e.doneChan = make(chan struct{})
 
-	// 启动批量发送goroutine
-	go e.batchSendLoop()
+	// 有界队列：避免前端消费慢时拖住日志主路径（满了就丢弃）
+	queueCap := e.batchSize * 200 // 默认约2000条
+	if queueCap < 100 {
+		queueCap = 100
+	}
+	e.queue = make(chan LogEntry, queueCap)
+
+	// 启动批量发送 goroutine（EventsEmit 在锁外调用）
+	go e.batchSendLoop(e.ctx, e.queue, e.stopChan, e.doneChan, e.batchSize, e.flushInterval)
 }
 
 // Stop 停止事件发射器
 func (e *EventEmitter) Stop() {
 	e.mu.Lock()
-	defer e.mu.Unlock()
-
-	if !e.enabled || e.stopped {
-		return // 已经停止，避免重复关闭
+	if !e.enabled {
+		e.mu.Unlock()
+		return
 	}
-
 	e.enabled = false
-	e.stopped = true
+	stopChan := e.stopChan
+	doneChan := e.doneChan
+	e.stopChan = nil
+	e.doneChan = nil
+	e.queue = nil
+	e.mu.Unlock()
 
-	if e.ticker != nil {
-		e.ticker.Stop()
+	if stopChan != nil {
+		close(stopChan)
 	}
-
-	close(e.stopChan)
-
-	// 刷新剩余日志
-	e.flushLocked()
+	if doneChan != nil {
+		<-doneChan
+	}
 }
 
 // Emit 发射一条日志事件
 func (e *EventEmitter) Emit(entry LogEntry) {
 	e.mu.Lock()
-	defer e.mu.Unlock()
-
-	if !e.enabled {
+	if !e.enabled || e.queue == nil {
+		e.mu.Unlock()
 		return
 	}
+	queue := e.queue
+	e.mu.Unlock()
 
-	// 添加到缓冲区
-	e.buffer = append(e.buffer, entry)
-
-	// 如果缓冲区满了，立即发送
-	if len(e.buffer) >= e.batchSize {
-		e.flushLocked()
-	}
-}
-
-// batchSendLoop 批量发送循环
-func (e *EventEmitter) batchSendLoop() {
-	for {
-		select {
-		case <-e.ticker.C:
-			e.mu.Lock()
-			e.flushLocked()
-			e.mu.Unlock()
-		case <-e.stopChan:
-			return
+	// 不阻塞调用方：队列满时丢弃（避免日志广播反向拖慢核心业务）
+	select {
+	case queue <- entry:
+	default:
+		// 尽量保留高优先级日志
+		if entry.Level == "ERROR" || entry.Level == "WARN" {
+			select {
+			case <-queue:
+			default:
+			}
+			select {
+			case queue <- entry:
+			default:
+			}
 		}
 	}
 }
 
-// flushLocked 刷新缓冲区（需要持有锁）
-func (e *EventEmitter) flushLocked() {
-	if len(e.buffer) == 0 {
-		return
+func (e *EventEmitter) batchSendLoop(
+	ctx context.Context,
+	queue <-chan LogEntry,
+	stop <-chan struct{},
+	done chan<- struct{},
+	batchSize int,
+	flushInterval time.Duration,
+) {
+	defer close(done)
+
+	if batchSize <= 0 {
+		batchSize = 10
+	}
+	if flushInterval <= 0 {
+		flushInterval = 100 * time.Millisecond
 	}
 
-	// 批量发送
-	if e.ctx != nil {
-		runtime.EventsEmit(e.ctx, "log:batch", e.buffer)
+	ticker := time.NewTicker(flushInterval)
+	defer ticker.Stop()
+
+	buffer := make([]LogEntry, 0, batchSize)
+	flush := func() {
+		if len(buffer) == 0 {
+			return
+		}
+		if ctx != nil {
+			runtime.EventsEmit(ctx, "log:batch", buffer)
+		}
+		buffer = buffer[:0]
 	}
 
-	// 清空缓冲区
-	e.buffer = e.buffer[:0]
+	for {
+		select {
+		case <-stop:
+			// 尽量把剩余消息刷掉（不阻塞）
+			for {
+				select {
+				case entry := <-queue:
+					buffer = append(buffer, entry)
+					if len(buffer) >= batchSize {
+						flush()
+					}
+				default:
+					flush()
+					return
+				}
+			}
+		case entry := <-queue:
+			buffer = append(buffer, entry)
+			if len(buffer) >= batchSize {
+				flush()
+			}
+		case <-ticker.C:
+			flush()
+		}
+	}
 }
 
 // IsEnabled 返回是否已启用

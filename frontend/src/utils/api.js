@@ -362,7 +362,10 @@ export const fetchModels = async () => {
         display_name: p.displayName || p.modelName
       }));
     } catch (err) {
-      console.warn('获取模型定价失败，降级到使用记录:', err);
+      // Wails 桌面应用不应再访问 HTTP API（/api/v1/...），否则会在 WebView 里触发 404。
+      // 模型列表仅用于筛选器，获取失败时返回空列表即可。
+      console.warn('获取模型定价失败，返回空模型列表:', err);
+      return [];
     }
   }
 

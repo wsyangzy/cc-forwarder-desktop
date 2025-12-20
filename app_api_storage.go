@@ -6,6 +6,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strings"
 	"time"
 
 	"cc-forwarder/config"
@@ -44,7 +46,7 @@ type EndpointRecordInfo struct {
 	UpdatedAt                   string            `json:"updated_at"`
 	// 运行时健康状态
 	Healthy        bool    `json:"healthy"`
-	LastCheck      string  `json:"last_check"`       // 最后健康检查时间
+	LastCheck      string  `json:"last_check"` // 最后健康检查时间
 	ResponseTimeMs float64 `json:"response_time_ms"`
 	// 冷却状态（请求级故障转移）
 	InCooldown     bool   `json:"in_cooldown"`     // 是否处于冷却中
@@ -83,24 +85,26 @@ type EndpointStorageStatus struct {
 // GetEndpointStorageStatus 获取端点存储状态
 func (a *App) GetEndpointStorageStatus() EndpointStorageStatus {
 	a.mu.RLock()
-	defer a.mu.RUnlock()
+	cfg := a.config
+	endpointService := a.endpointService
+	a.mu.RUnlock()
 
 	status := EndpointStorageStatus{
 		StorageType: "yaml", // 默认
 	}
 
-	if a.config != nil {
-		status.StorageType = a.config.EndpointsStorage.Type
+	if cfg != nil {
+		status.StorageType = cfg.EndpointsStorage.Type
 	}
 
 	// 如果使用 SQLite 存储且服务已初始化
-	if a.endpointService != nil {
+	if endpointService != nil {
 		status.Enabled = true
 
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
-		records, err := a.endpointService.ListEndpoints(ctx)
+		records, err := endpointService.ListEndpoints(ctx)
 		if err == nil {
 			status.TotalCount = len(records)
 			for _, r := range records {
@@ -117,16 +121,18 @@ func (a *App) GetEndpointStorageStatus() EndpointStorageStatus {
 // GetEndpointRecords 获取所有端点记录（SQLite 存储）
 func (a *App) GetEndpointRecords() ([]EndpointRecordInfo, error) {
 	a.mu.RLock()
-	defer a.mu.RUnlock()
+	endpointService := a.endpointService
+	endpointManager := a.endpointManager
+	a.mu.RUnlock()
 
-	if a.endpointService == nil {
+	if endpointService == nil {
 		return nil, fmt.Errorf("端点存储服务未启用 (需要设置 endpoints_storage.type: sqlite)")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	records, err := a.endpointService.ListEndpoints(ctx)
+	records, err := endpointService.ListEndpoints(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("获取端点列表失败: %w", err)
 	}
@@ -136,8 +142,8 @@ func (a *App) GetEndpointRecords() ([]EndpointRecordInfo, error) {
 		info := a.recordToInfo(r)
 
 		// 获取运行时健康状态
-		if a.endpointManager != nil {
-			status := a.endpointManager.GetEndpointStatus(r.Name)
+		if endpointManager != nil {
+			status := endpointManager.GetEndpointStatus(r.Name)
 			info.Healthy = status.Healthy
 			info.ResponseTimeMs = float64(status.ResponseTime.Milliseconds())
 			// 格式化最后检查时间
@@ -161,16 +167,17 @@ func (a *App) GetEndpointRecords() ([]EndpointRecordInfo, error) {
 // GetEndpointRecord 获取单个端点详情
 func (a *App) GetEndpointRecord(name string) (EndpointRecordInfo, error) {
 	a.mu.RLock()
-	defer a.mu.RUnlock()
+	endpointService := a.endpointService
+	a.mu.RUnlock()
 
-	if a.endpointService == nil {
+	if endpointService == nil {
 		return EndpointRecordInfo{}, fmt.Errorf("端点存储服务未启用")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	detail, err := a.endpointService.GetEndpointWithHealth(ctx, name)
+	detail, err := endpointService.GetEndpointWithHealth(ctx, name)
 	if err != nil {
 		return EndpointRecordInfo{}, err
 	}
@@ -226,9 +233,12 @@ func (a *App) GetEndpointRecord(name string) (EndpointRecordInfo, error) {
 // CreateEndpointRecord 创建新端点
 func (a *App) CreateEndpointRecord(input CreateEndpointInput) error {
 	a.mu.RLock()
-	defer a.mu.RUnlock()
+	endpointService := a.endpointService
+	channelService := a.channelService
+	logger := a.logger
+	a.mu.RUnlock()
 
-	if a.endpointService == nil {
+	if endpointService == nil {
 		return fmt.Errorf("端点存储服务未启用")
 	}
 
@@ -266,13 +276,18 @@ func (a *App) CreateEndpointRecord(input CreateEndpointInput) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	_, err := a.endpointService.CreateEndpoint(ctx, record)
+	// v6.1+: 若渠道表已启用，确保渠道已存在（兼容旧数据：允许端点创建时补齐渠道记录）
+	if channelService != nil && input.Channel != "" {
+		_ = channelService.EnsureChannel(ctx, input.Channel)
+	}
+
+	_, err := endpointService.CreateEndpoint(ctx, record)
 	if err != nil {
 		return fmt.Errorf("创建端点失败: %w", err)
 	}
 
-	if a.logger != nil {
-		a.logger.Info("✅ 端点已创建", "name", input.Name, "channel", input.Channel)
+	if logger != nil {
+		logger.Info("✅ 端点已创建", "name", input.Name, "channel", input.Channel)
 	}
 
 	// v5.0: endpointService.CreateEndpoint 已经将端点添加到内存并触发健康检测
@@ -287,9 +302,12 @@ func (a *App) CreateEndpointRecord(input CreateEndpointInput) error {
 // UpdateEndpointRecord 更新端点
 func (a *App) UpdateEndpointRecord(name string, input CreateEndpointInput) error {
 	a.mu.RLock()
-	defer a.mu.RUnlock()
+	endpointService := a.endpointService
+	endpointManager := a.endpointManager
+	logger := a.logger
+	a.mu.RUnlock()
 
-	if a.endpointService == nil {
+	if endpointService == nil {
 		return fmt.Errorf("端点存储服务未启用")
 	}
 
@@ -297,7 +315,7 @@ func (a *App) UpdateEndpointRecord(name string, input CreateEndpointInput) error
 	defer cancel()
 
 	// v5.0: 从数据库获取当前记录，用于保留敏感字段
-	existingRecord, err := a.endpointService.GetEndpoint(ctx, name)
+	existingRecord, err := endpointService.GetEndpoint(ctx, name)
 	if err != nil {
 		return fmt.Errorf("获取端点失败: %w", err)
 	}
@@ -334,16 +352,16 @@ func (a *App) UpdateEndpointRecord(name string, input CreateEndpointInput) error
 		Enabled:                     existingRecord.Enabled, // 保持原有激活状态
 	}
 
-	if err := a.endpointService.UpdateEndpoint(ctx, record); err != nil {
+	if err := endpointService.UpdateEndpoint(ctx, record); err != nil {
 		return fmt.Errorf("更新端点失败: %w", err)
 	}
 
-	if a.logger != nil {
-		a.logger.Info("✅ 端点已更新", "name", name)
+	if logger != nil {
+		logger.Info("✅ 端点已更新", "name", name)
 	}
 
 	// v5.0: 同步更新内存中的端点配置（确保 Key 等配置立即生效）
-	if a.endpointManager != nil {
+	if endpointManager != nil {
 		// 构建 failover_enabled 指针
 		failoverEnabled := input.FailoverEnabled
 
@@ -362,11 +380,15 @@ func (a *App) UpdateEndpointRecord(name string, input CreateEndpointInput) error
 		}
 
 		// 更新内存中的端点配置
-		if err := a.endpointManager.UpdateEndpointConfig(name, endpointCfg); err != nil {
-			a.logger.Warn("⚠️ 同步端点配置到内存失败", "name", name, "error", err)
+		if err := endpointManager.UpdateEndpointConfig(name, endpointCfg); err != nil {
+			if logger != nil {
+				logger.Warn("⚠️ 同步端点配置到内存失败", "name", name, "error", err)
+			}
 			// 不返回错误，数据库已更新成功
 		} else {
-			a.logger.Debug("✅ 端点配置已同步到内存", "name", name)
+			if logger != nil {
+				logger.Debug("✅ 端点配置已同步到内存", "name", name)
+			}
 		}
 	}
 
@@ -377,24 +399,85 @@ func (a *App) UpdateEndpointRecord(name string, input CreateEndpointInput) error
 	return nil
 }
 
-// DeleteEndpointRecord 删除端点
-func (a *App) DeleteEndpointRecord(name string) error {
+// SetEndpointFailoverEnabled 设置端点是否参与故障转移（快捷开关）
+// 仅影响当前端点所在渠道内的候选端点集合。
+func (a *App) SetEndpointFailoverEnabled(name string, enabled bool) error {
 	a.mu.RLock()
-	defer a.mu.RUnlock()
+	endpointService := a.endpointService
+	endpointManager := a.endpointManager
+	logger := a.logger
+	a.mu.RUnlock()
 
-	if a.endpointService == nil {
+	if endpointService == nil {
 		return fmt.Errorf("端点存储服务未启用")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	if err := a.endpointService.DeleteEndpoint(ctx, name); err != nil {
+	record, err := endpointService.GetEndpoint(ctx, name)
+	if err != nil {
+		return fmt.Errorf("获取端点失败: %w", err)
+	}
+	if record == nil {
+		return fmt.Errorf("端点 '%s' 不存在", name)
+	}
+
+	record.FailoverEnabled = enabled
+	if err := endpointService.UpdateEndpoint(ctx, record); err != nil {
+		return fmt.Errorf("更新端点失败: %w", err)
+	}
+
+	if logger != nil {
+		logger.Info("✅ 端点故障转移参与状态已更新", "name", name, "enabled", enabled)
+	}
+
+	// 同步更新内存中的端点配置（确保路由候选立即生效）
+	if endpointManager != nil {
+		failoverEnabled := enabled
+		endpointCfg := config.EndpointConfig{
+			Name:                name,
+			URL:                 record.URL,
+			Channel:             record.Channel,
+			Priority:            record.Priority,
+			FailoverEnabled:     &failoverEnabled,
+			Token:               record.Token,
+			ApiKey:              record.ApiKey,
+			Timeout:             time.Duration(record.TimeoutSeconds) * time.Second,
+			Headers:             record.Headers,
+			SupportsCountTokens: record.SupportsCountTokens,
+		}
+
+		if err := endpointManager.UpdateEndpointConfig(name, endpointCfg); err != nil {
+			if logger != nil {
+				logger.Warn("⚠️ 同步端点配置到内存失败", "name", name, "error", err)
+			}
+		}
+	}
+
+	return nil
+}
+
+// DeleteEndpointRecord 删除端点
+func (a *App) DeleteEndpointRecord(name string) error {
+	a.mu.RLock()
+	endpointService := a.endpointService
+	logger := a.logger
+	a.mu.RUnlock()
+
+	if endpointService == nil {
+		return fmt.Errorf("端点存储服务未启用")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := endpointService.DeleteEndpoint(ctx, name); err != nil {
 		return fmt.Errorf("删除端点失败: %w", err)
 	}
 
-	if a.logger != nil {
-		a.logger.Info("✅ 端点已删除", "name", name)
+	if logger != nil {
+		logger.Info("✅ 端点已删除", "name", name)
 	}
 
 	// v5.0: 删除成功后，异步同步端点倍率到 UsageTracker
@@ -404,82 +487,50 @@ func (a *App) DeleteEndpointRecord(name string) error {
 }
 
 // ToggleEndpointRecord 切换端点启用状态
-// v5.0: enabled=true 时激活组，enabled=false 时不操作（组管理器会自动处理）
+// v6.0: 切换语义升级为“激活/停用渠道(channel)”
 func (a *App) ToggleEndpointRecord(name string, enabled bool) error {
 	a.mu.RLock()
-	defer a.mu.RUnlock()
+	endpointService := a.endpointService
+	logger := a.logger
+	a.mu.RUnlock()
 
-	if a.endpointService == nil {
+	if endpointService == nil {
 		return fmt.Errorf("端点存储服务未启用")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// v5.0: 激活端点时实现互斥
 	if enabled {
-		// 1. 数据库层互斥：先停用所有端点
-		if err := a.endpointService.DisableAllEndpoints(ctx); err != nil {
-			return fmt.Errorf("停用其他端点失败: %w", err)
+		// 激活：以端点所属渠道为单位
+		record, err := endpointService.GetEndpoint(ctx, name)
+		if err != nil {
+			return fmt.Errorf("获取端点配置失败: %w", err)
 		}
-
-		// 2. 激活目标端点（数据库）
-		if err := a.endpointService.ToggleEndpoint(ctx, name, true); err != nil {
-			return fmt.Errorf("激活端点失败: %w", err)
+		if record == nil {
+			return fmt.Errorf("端点 '%s' 不存在", name)
 		}
-
-		// 3. 确保端点在内存中存在（处理新建端点的情况）
-		if a.endpointManager != nil {
-			// 从数据库获取完整的端点配置
-			record, err := a.endpointService.GetEndpoint(ctx, name)
-			if err != nil {
-				return fmt.Errorf("获取端点配置失败: %w", err)
-			}
-
-			// 构建 config.EndpointConfig
-			failoverEnabled := record.FailoverEnabled
-			endpointCfg := config.EndpointConfig{
-				Name:                record.Name,
-				URL:                 record.URL,
-				Channel:             record.Channel,
-				Priority:            record.Priority,
-				FailoverEnabled:     &failoverEnabled,
-				Token:               record.Token,
-				ApiKey:              record.ApiKey,
-				Timeout:             time.Duration(record.TimeoutSeconds) * time.Second,
-				Headers:             record.Headers,
-				SupportsCountTokens: record.SupportsCountTokens,
-			}
-
-			// 尝试添加端点（如果已存在会更新配置）
-			if err := a.endpointManager.AddEndpoint(endpointCfg); err != nil {
-				// 端点已存在，尝试更新配置
-				if updateErr := a.endpointManager.UpdateEndpointConfig(name, endpointCfg); updateErr != nil {
-					a.logger.Warn("⚠️ 更新端点配置失败", "name", name, "error", updateErr)
-				}
-			} else {
-				a.logger.Info("✅ 新端点已添加到内存", "name", name)
-			}
-
-			// 4. 激活对应的组
-			if err := a.endpointManager.ManualActivateGroup(name); err != nil {
-				return fmt.Errorf("激活组失败: %w", err)
-			}
+		if err := endpointService.ActivateChannel(ctx, record.Channel); err != nil {
+			return fmt.Errorf("激活渠道失败: %w", err)
 		}
 	} else {
-		// 停用端点：只更新数据库
-		if err := a.endpointService.ToggleEndpoint(ctx, name, false); err != nil {
-			return fmt.Errorf("切换端点状态失败: %w", err)
+		// 停用：以端点所属渠道为单位
+		record, err := endpointService.GetEndpoint(ctx, name)
+		if err != nil {
+			return fmt.Errorf("获取端点配置失败: %w", err)
+		}
+		if record == nil {
+			return fmt.Errorf("端点 '%s' 不存在", name)
+		}
+		if err := endpointService.DeactivateChannel(ctx, record.Channel); err != nil {
+			return fmt.Errorf("停用渠道失败: %w", err)
 		}
 	}
 
-	status := "启用"
-	if !enabled {
-		status = "禁用"
-	}
+	status := map[bool]string{true: "启用", false: "禁用"}[enabled]
 
-	if a.logger != nil {
-		a.logger.Info("✅ 端点状态已切换", "name", name, "status", status)
+	if logger != nil {
+		logger.Info("✅ 端点状态已切换", "name", name, "status", status)
 	}
 
 	return nil
@@ -488,56 +539,386 @@ func (a *App) ToggleEndpointRecord(name string, enabled bool) error {
 // ChannelInfo 渠道信息
 type ChannelInfo struct {
 	Name          string `json:"name"`
+	Website       string `json:"website,omitempty"`
+	Priority      int    `json:"priority"`
+	CreatedAt     string `json:"created_at"`
 	EndpointCount int    `json:"endpoint_count"`
 }
 
 // GetChannels 获取所有渠道
 func (a *App) GetChannels() ([]ChannelInfo, error) {
 	a.mu.RLock()
-	defer a.mu.RUnlock()
-
-	if a.endpointService == nil {
-		return nil, fmt.Errorf("端点存储服务未启用")
-	}
+	endpointService := a.endpointService
+	channelService := a.channelService
+	usageTracker := a.usageTracker
+	a.mu.RUnlock()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	records, err := a.endpointService.ListEndpoints(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("获取端点列表失败: %w", err)
+	channelCount := make(map[string]int)
+	// 统计每个渠道的端点数（兼容：端点表中存在但 channels 表未收录的渠道）
+	// 优先用 EndpointService（字段最全）；若因旧库缺字段导致失败，则降级为聚合 SQL（只依赖 channel 列）
+	if endpointService != nil {
+		records, err := endpointService.ListEndpoints(ctx)
+		if err == nil {
+			for _, r := range records {
+				if r.Channel == "" {
+					continue
+				}
+				channelCount[r.Channel]++
+			}
+		} else if usageTracker != nil && usageTracker.GetDB() != nil {
+			rows, qerr := usageTracker.GetDB().QueryContext(ctx, "SELECT channel, COUNT(*) FROM endpoints GROUP BY channel")
+			if qerr == nil {
+				defer rows.Close()
+				for rows.Next() {
+					var name string
+					var count int
+					if err := rows.Scan(&name, &count); err != nil {
+						continue
+					}
+					if name == "" {
+						continue
+					}
+					channelCount[name] = count
+				}
+			}
+		}
 	}
 
-	// 统计每个渠道的端点数
-	channelMap := make(map[string]int)
-	for _, r := range records {
-		channelMap[r.Channel]++
+	channelWebsite := make(map[string]string)
+	channelPriority := make(map[string]int)
+	channelCreatedAt := make(map[string]string)
+	orderedChannels := make([]string, 0, 16)
+	if channelService != nil {
+		channelRecords, err := channelService.ListChannels(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("获取渠道列表失败: %w", err)
+		}
+		for _, c := range channelRecords {
+			if c == nil || c.Name == "" {
+				continue
+			}
+			channelWebsite[c.Name] = c.Website
+			if c.Priority <= 0 {
+				channelPriority[c.Name] = 1
+			} else {
+				channelPriority[c.Name] = c.Priority
+			}
+			if !c.CreatedAt.IsZero() {
+				channelCreatedAt[c.Name] = c.CreatedAt.Format("2006-01-02 15:04:05")
+			}
+			if _, ok := channelCount[c.Name]; !ok {
+				channelCount[c.Name] = 0
+			}
+			orderedChannels = append(orderedChannels, c.Name)
+		}
 	}
 
-	result := make([]ChannelInfo, 0, len(channelMap))
-	for name, count := range channelMap {
+	seen := make(map[string]struct{}, len(channelCount))
+	result := make([]ChannelInfo, 0, len(channelCount))
+
+	// 1) channels 表中的渠道（已按 store 层排序），优先输出，保证 UI 顺序稳定
+	for _, name := range orderedChannels {
+		count := channelCount[name]
 		result = append(result, ChannelInfo{
 			Name:          name,
+			Website:       channelWebsite[name],
+			Priority:      channelPriority[name],
+			CreatedAt:     channelCreatedAt[name],
+			EndpointCount: count,
+		})
+		seen[name] = struct{}{}
+	}
+
+	// 2) 兼容：端点表里存在但 channels 表未收录的渠道（作为兜底）
+	for name, count := range channelCount {
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		result = append(result, ChannelInfo{
+			Name:          name,
+			Website:       channelWebsite[name],
+			Priority:      999,
+			CreatedAt:     "",
 			EndpointCount: count,
 		})
 	}
 
+	sort.Slice(result, func(i, j int) bool {
+		pi := result[i].Priority
+		pj := result[j].Priority
+		if pi <= 0 {
+			pi = 1
+		}
+		if pj <= 0 {
+			pj = 1
+		}
+		if pi != pj {
+			return pi < pj
+		}
+		// 同优先级：按创建时间倒序（新创建排在前面）
+		if result[i].CreatedAt != result[j].CreatedAt {
+			return result[i].CreatedAt > result[j].CreatedAt
+		}
+		return result[i].Name < result[j].Name
+	})
 	return result, nil
+}
+
+type CreateChannelInput struct {
+	Name    string `json:"name"`
+	Website string `json:"website,omitempty"`
+	Priority int   `json:"priority"`
+}
+
+func (a *App) CreateChannel(input CreateChannelInput) error {
+	a.mu.RLock()
+	channelService := a.channelService
+	endpointManager := a.endpointManager
+	logger := a.logger
+	a.mu.RUnlock()
+
+	if channelService == nil {
+		return fmt.Errorf("渠道存储服务未启用")
+	}
+	input.Name = strings.TrimSpace(input.Name)
+	input.Website = strings.TrimSpace(input.Website)
+	if input.Name == "" {
+		return fmt.Errorf("渠道名称不能为空")
+	}
+	if input.Priority <= 0 {
+		input.Priority = 1
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	_, err := channelService.CreateChannel(ctx, &store.ChannelRecord{
+		Name:     input.Name,
+		Website:  input.Website,
+		Priority: input.Priority,
+	})
+	if err != nil {
+		return err
+	}
+	if logger != nil {
+		logger.Info("✅ 渠道已创建", "name", input.Name)
+	}
+
+	// 同步渠道优先级到运行时（用于渠道间故障转移顺序）
+	if endpointManager != nil {
+		a.syncChannelPrioritiesToEndpointManager(ctx)
+	}
+	return nil
+}
+
+type UpdateChannelInput struct {
+	Name     string `json:"name"`
+	Website  string `json:"website,omitempty"`
+	Priority int    `json:"priority"`
+}
+
+func (a *App) UpdateChannel(input UpdateChannelInput) error {
+	a.mu.RLock()
+	channelService := a.channelService
+	endpointManager := a.endpointManager
+	logger := a.logger
+	a.mu.RUnlock()
+
+	if channelService == nil {
+		return fmt.Errorf("渠道存储服务未启用")
+	}
+
+	input.Name = strings.TrimSpace(input.Name)
+	input.Website = strings.TrimSpace(input.Website)
+	if input.Name == "" {
+		return fmt.Errorf("渠道名称不能为空")
+	}
+	if input.Priority <= 0 {
+		input.Priority = 1
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := channelService.UpdateChannel(ctx, &store.ChannelRecord{
+		Name:     input.Name,
+		Website:  input.Website,
+		Priority: input.Priority,
+	}); err != nil {
+		return err
+	}
+
+	if endpointManager != nil {
+		a.syncChannelPrioritiesToEndpointManager(ctx)
+	}
+
+	// 推送前端刷新（channelsMeta & groups）
+	a.emitEndpointUpdate()
+
+	if logger != nil {
+		logger.Info("✅ 渠道已更新", "name", input.Name, "priority", input.Priority)
+	}
+	return nil
+}
+
+func (a *App) syncChannelPrioritiesToEndpointManager(ctx context.Context) {
+	a.mu.RLock()
+	channelStore := a.channelStore
+	endpointManager := a.endpointManager
+	logger := a.logger
+	a.mu.RUnlock()
+
+	if channelStore == nil || endpointManager == nil {
+		return
+	}
+
+	baseCtx := ctx
+	if baseCtx == nil || baseCtx.Err() != nil {
+		baseCtx = context.Background()
+	}
+
+	syncCtx, cancel := context.WithTimeout(baseCtx, 3*time.Second)
+	defer cancel()
+
+	records, err := channelStore.List(syncCtx)
+	if err != nil {
+		if logger != nil {
+			logger.Warn("⚠️ 同步渠道优先级失败", "error", err)
+		}
+		return
+	}
+
+	priorities := make(map[string]int, len(records))
+	for _, r := range records {
+		if r == nil || r.Name == "" {
+			continue
+		}
+		p := r.Priority
+		if p <= 0 {
+			p = 1
+		}
+		priorities[r.Name] = p
+	}
+	endpointManager.UpdateChannelPriorities(priorities)
+}
+
+// DeleteChannel 删除渠道
+// deleteEndpoints=true 时会一并删除该渠道下所有端点。
+func (a *App) DeleteChannel(name string, deleteEndpoints bool) error {
+	a.mu.RLock()
+	channelStore := a.channelStore
+	channelService := a.channelService
+	endpointStore := a.endpointStore
+	endpointService := a.endpointService
+	usageTracker := a.usageTracker
+	storeDB := a.storeDB
+	logger := a.logger
+	a.mu.RUnlock()
+
+	if channelService == nil || channelStore == nil {
+		return fmt.Errorf("渠道存储服务未启用")
+	}
+	if usageTracker == nil || usageTracker.GetDB() == nil {
+		if storeDB == nil {
+			return fmt.Errorf("数据库未初始化")
+		}
+	}
+
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return fmt.Errorf("渠道名称不能为空")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	db := storeDB
+	if db == nil && usageTracker != nil {
+		db = usageTracker.GetDB()
+	}
+	if db == nil {
+		return fmt.Errorf("数据库未初始化")
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("开启事务失败: %w", err)
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
+	if endpointStore == nil {
+		endpointStore = store.NewSQLiteEndpointStore(db)
+	}
+	endpointStore = endpointStore.WithTx(tx)
+	channelStore = channelStore.WithTx(tx)
+
+	// 端点检查/删除
+	endpoints, err := endpointStore.ListByChannel(ctx, name)
+	if err != nil {
+		return fmt.Errorf("获取渠道端点失败: %w", err)
+	}
+	if len(endpoints) > 0 && !deleteEndpoints {
+		return fmt.Errorf("渠道 '%s' 下仍有 %d 个端点，请勾选一并删除", name, len(endpoints))
+	}
+	if len(endpoints) > 0 {
+		names := make([]string, 0, len(endpoints))
+		for _, ep := range endpoints {
+			if ep != nil && ep.Name != "" {
+				names = append(names, ep.Name)
+			}
+		}
+		if len(names) > 0 {
+			if err := endpointStore.BatchDelete(ctx, names); err != nil {
+				return fmt.Errorf("删除渠道端点失败: %w", err)
+			}
+		}
+	}
+
+	// 删除渠道
+	if err := channelStore.Delete(ctx, name); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("提交事务失败: %w", err)
+	}
+
+	// 同步运行时配置（删除端点/组）
+	if endpointService != nil {
+		if err := endpointService.SyncFromDatabase(ctx); err != nil && logger != nil {
+			logger.Warn("⚠️ 删除渠道后同步运行时配置失败", "error", err)
+		}
+	}
+
+	// 推送前端刷新
+	a.emitEndpointUpdate()
+
+	if logger != nil {
+		logger.Info("✅ 渠道已删除", "name", name, "delete_endpoints", deleteEndpoints)
+	}
+
+	return nil
 }
 
 // GetEndpointsByChannel 按渠道获取端点
 func (a *App) GetEndpointsByChannel(channel string) ([]EndpointRecordInfo, error) {
 	a.mu.RLock()
-	defer a.mu.RUnlock()
+	endpointService := a.endpointService
+	endpointManager := a.endpointManager
+	a.mu.RUnlock()
 
-	if a.endpointService == nil {
+	if endpointService == nil {
 		return nil, fmt.Errorf("端点存储服务未启用")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	records, err := a.endpointService.ListEndpointsByChannel(ctx, channel)
+	records, err := endpointService.ListEndpointsByChannel(ctx, channel)
 	if err != nil {
 		return nil, fmt.Errorf("获取渠道端点列表失败: %w", err)
 	}
@@ -547,8 +928,8 @@ func (a *App) GetEndpointsByChannel(channel string) ([]EndpointRecordInfo, error
 		info := a.recordToInfo(r)
 
 		// 获取运行时健康状态
-		if a.endpointManager != nil {
-			status := a.endpointManager.GetEndpointStatus(r.Name)
+		if endpointManager != nil {
+			status := endpointManager.GetEndpointStatus(r.Name)
 			info.Healthy = status.Healthy
 			info.ResponseTimeMs = float64(status.ResponseTime.Milliseconds())
 			// 格式化最后检查时间

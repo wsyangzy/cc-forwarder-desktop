@@ -176,6 +176,31 @@ BEGIN
 END;
 
 -- ============================================================================
+-- 渠道表 (v6.1.0 新增)
+-- 支持“先创建渠道，再在渠道下创建端点”的管理流程
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS channels (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    name TEXT UNIQUE NOT NULL,                      -- 渠道名称
+    website TEXT,                                   -- 渠道官网（可选）
+    priority INTEGER DEFAULT 1,                     -- 渠道优先级（数字越小越高，用于渠道间故障转移顺序）
+
+    created_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00'),
+    updated_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00')
+);
+
+CREATE INDEX IF NOT EXISTS idx_channels_name ON channels(name);
+
+CREATE TRIGGER IF NOT EXISTS update_channels_timestamp
+    AFTER UPDATE ON channels
+    FOR EACH ROW
+    WHEN NEW.updated_at = OLD.updated_at
+BEGIN
+    UPDATE channels SET updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00' WHERE id = NEW.id;
+END;
+
+-- ============================================================================
 -- 模型定价表 (v5.0.0 新增 - 2025-12-06, 更新于 2025-12-06 支持 5m/1h 缓存)
 -- 将模型定价从 config.yaml 迁移到 SQLite，支持动态管理
 -- ============================================================================

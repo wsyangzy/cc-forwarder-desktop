@@ -77,7 +77,7 @@ func main() {
 
 	// 运行 Wails 应用
 	err := wails.Run(&options.App{
-		Title:     "",
+		Title:     "Claude Request Forwarder",
 		Width:     1280,
 		Height:    800,
 		MinWidth:  1024,
@@ -112,8 +112,8 @@ func main() {
 				UseToolbar:                 false,
 			},
 			About: &mac.AboutInfo{
-				Title:   "CC-Forwarder",
-				Message: fmt.Sprintf("Claude/OpenAI API 本地代理转发服务\n版本 %s", Version),
+				Title:   "Claude Request Forwarder",
+				Message: fmt.Sprintf("Claude Request Forwarder 本地代理转发服务\n版本 %s", Version),
 				Icon:    icon,
 			},
 			WebviewIsTransparent: true,

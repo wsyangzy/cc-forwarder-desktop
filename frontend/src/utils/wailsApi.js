@@ -280,12 +280,11 @@ export const getGroups = async () => {
     WailsApp.GetKeysOverview().catch(() => ({ endpoints: [] })) // 容错：获取 keys 失败不影响主流程
   ]);
 
-  // v4.0: 一个端点 = 一个组，组名 = 端点名
+  // v6.0: 组名 = 渠道(channel)（后端已在 GetEndpoints 中映射到 ep.group）
   // 计算每个组的健康端点统计
   const groupHealthMap = new Map();
   endpointsData.forEach(ep => {
-    // v4.0: 使用端点名作为组名（因为一个端点就是一个组）
-    const groupName = ep.name;
+    const groupName = ep.group || ep.channel || ep.name;
     if (!groupHealthMap.has(groupName)) {
       groupHealthMap.set(groupName, { total: 0, healthy: 0 });
     }
@@ -310,6 +309,18 @@ export const getGroups = async () => {
     endpointTokensMap.set(ep.endpoint, tokens);
   });
 
+  // 将端点 tokens 聚合到组（渠道）
+  const groupTokensMap = new Map();
+  endpointsData.forEach(ep => {
+    const groupName = ep.group || ep.channel || ep.name;
+    const endpointTokens = endpointTokensMap.get(ep.name) || [];
+    if (!groupTokensMap.has(groupName)) {
+      groupTokensMap.set(groupName, []);
+    }
+    const existing = groupTokensMap.get(groupName);
+    existing.push(...endpointTokens);
+  });
+
   // 推断 Token 类型的辅助函数
   function inferTokenType(name) {
     if (!name) return 'Std';
@@ -323,8 +334,8 @@ export const getGroups = async () => {
   // 转换为前端期望的格式
   const formattedGroups = groups.map(g => {
     const healthStats = groupHealthMap.get(g.name) || { total: 0, healthy: 0 };
-    // v4.0: 组名 = 端点名，从 endpointTokensMap 获取 tokens
-    const tokens = endpointTokensMap.get(g.name) || [];
+    // v6.0: 组名 = 渠道(channel)，聚合组内所有端点 tokens
+    const tokens = groupTokensMap.get(g.name) || [];
 
     return {
       name: g.name,
@@ -349,6 +360,15 @@ export const getGroups = async () => {
     active_group: activeGroup?.name || null,
     total_suspended_requests: 0
   };
+};
+
+// 获取后端原始组信息（轻量：仅 GetGroups，不做额外聚合）
+export const getGroupsRaw = async () => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+
+  const groups = await WailsApp.GetGroups();
+  return Array.isArray(groups) ? groups : [];
 };
 
 export const activateGroup = async (groupName) => {
@@ -804,6 +824,14 @@ export const updateEndpointRecord = async (name, input) => {
   return { success: true };
 };
 
+export const setEndpointFailoverEnabled = async (name, enabled) => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+
+  await WailsApp.SetEndpointFailoverEnabled(name, !!enabled);
+  return { success: true };
+};
+
 /**
  * 删除端点
  * @param {string} name - 端点名称
@@ -842,8 +870,55 @@ export const getChannels = async () => {
   const channels = await WailsApp.GetChannels();
   return (channels || []).map(c => ({
     name: c.name,
+    website: c.website || '',
+    priority: c.priority || 1,
+    createdAt: c.created_at || '',
     endpointCount: c.endpoint_count
   }));
+};
+
+export const createChannel = async (input) => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+
+  const priority = parseInt(input?.priority, 10);
+  const payload = {
+    name: (input?.name || '').trim(),
+    website: (input?.website || '').trim(),
+    priority: Number.isFinite(priority) && priority > 0 ? priority : 1
+  };
+
+  await WailsApp.CreateChannel(payload);
+  return { success: true };
+};
+
+export const updateChannel = async (input) => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+
+  const channelName = (input?.name || '').trim();
+  if (!channelName) throw new Error('渠道名称不能为空');
+
+  const priority = parseInt(input?.priority, 10);
+  const payload = {
+    name: channelName,
+    website: (input?.website || '').trim(),
+    priority: Number.isFinite(priority) && priority > 0 ? priority : 1
+  };
+
+  await WailsApp.UpdateChannel(payload);
+  return { success: true };
+};
+
+export const deleteChannel = async (name, deleteEndpoints = false) => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+
+  const channelName = (name || '').trim();
+  if (!channelName) throw new Error('渠道名称不能为空');
+
+  await WailsApp.DeleteChannel(channelName, !!deleteEndpoints);
+  return { success: true };
 };
 
 /**

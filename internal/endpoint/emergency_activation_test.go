@@ -266,8 +266,9 @@ func TestEmergencyActivationScenarios(t *testing.T) {
 		// 测试can_force_activate逻辑（非活跃组+无健康端点）
 		t.Log("测试can_force_activate逻辑...")
 
-		// 先暂停组让其变为非活跃
-		gm.ManualPauseGroup(groupName, 0)
+		// v6.0: 关闭“渠道间故障转移”时不允许暂停当前活跃组；
+		// 这里使用 DeactivateGroup 让其变为非活跃，以验证 can_force_activate 的判定逻辑。
+		_ = gm.DeactivateGroup(groupName)
 
 		details = gm.GetGroupDetails()
 		groupsData, _ = details["groups"].([]map[string]interface{})

@@ -114,7 +114,7 @@ func getDatabaseType(config DatabaseConfig) string {
 func setDefaultConfig(config *DatabaseConfig) {
 	// SQLite 默认配置
 	if config.DatabasePath == "" {
-		config.DatabasePath = "data/usage.db"
+		config.DatabasePath = "data/cc-forwarder.db"
 	}
 	if config.Timezone == "" {
 		config.Timezone = "Asia/Shanghai"

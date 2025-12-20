@@ -16,9 +16,9 @@ import (
 // SuspensionManager 管理请求挂起逻辑
 // 从RetryHandler中分离出来，专门负责请求挂起的判断和等待逻辑
 type SuspensionManager struct {
-	config          *config.Config
-	endpointManager *endpoint.Manager
-	groupManager    *endpoint.GroupManager
+	config                *config.Config
+	endpointManager       *endpoint.Manager
+	groupManager          *endpoint.GroupManager
 	recoverySignalManager *EndpointRecoverySignalManager // 端点恢复信号管理器
 
 	// 挂起请求计数相关字段
@@ -62,7 +62,7 @@ func (sm *SuspensionManager) ShouldSuspend(ctx context.Context) bool {
 	}
 
 	// 检查是否为手动模式
-	if sm.config.Group.AutoSwitchBetweenGroups {
+	if sm.config.Failover.Enabled {
 		slog.InfoContext(ctx, "🔍 [挂起检查] 当前为自动切换模式，不挂起请求")
 		return false
 	}
@@ -119,7 +119,7 @@ func (sm *SuspensionManager) ShouldSuspend(ctx context.Context) bool {
 	}
 
 	slog.InfoContext(ctx, fmt.Sprintf("✅ [挂起检查] 满足挂起条件: 手动模式=%t, 功能启用=%t, 当前挂起数=%d/%d, 可用备用组=%v",
-		!sm.config.Group.AutoSwitchBetweenGroups, sm.config.RequestSuspend.Enabled,
+		!sm.config.Failover.Enabled, sm.config.RequestSuspend.Enabled,
 		currentCount, sm.config.RequestSuspend.MaxSuspendedRequests, availableGroups))
 
 	return true
@@ -237,6 +237,7 @@ func (sm *SuspensionManager) UpdateConfig(cfg *config.Config) {
 //   - ctx: 上下文
 //   - connID: 连接ID
 //   - failedEndpoint: 失败的端点名称
+//
 // 返回：是否成功恢复（端点恢复或组切换）
 func (sm *SuspensionManager) WaitForEndpointRecovery(ctx context.Context, connID, failedEndpoint string) bool {
 	// 检查配置和管理器是否存在

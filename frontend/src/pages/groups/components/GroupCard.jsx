@@ -5,7 +5,7 @@
 
 import { Play, Pause, Clock, Activity, Server, MoreVertical } from 'lucide-react';
 
-const GroupCard = ({ group, onActivate, onPause, loading }) => {
+const GroupCard = ({ group, onActivate, onPause, loading, channelFailoverEnabled = true }) => {
   const isActive = group.is_active;
   const isCooldown = group.in_cooldown;
   const healthyPercent = group.total_endpoints > 0
@@ -95,7 +95,8 @@ const GroupCard = ({ group, onActivate, onPause, loading }) => {
         {isActive ? (
           <button
             onClick={() => onPause(group.name)}
-            disabled={loading}
+            disabled={loading || !channelFailoverEnabled}
+            title={!channelFailoverEnabled ? '已关闭渠道间故障转移：不可暂停渠道' : undefined}
             className="w-full flex items-center justify-center gap-2 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-white font-medium text-sm transition-all border border-slate-700 disabled:opacity-50"
           >
             <Pause className="w-4 h-4" /> 暂停运行

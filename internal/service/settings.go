@@ -89,7 +89,7 @@ func NewSettingsService(store store.SettingsStore) *SettingsService {
 			CategoryFailover: {
 				Name:        CategoryFailover,
 				Label:       "故障转移",
-				Description: "配置端点故障转移行为",
+				Description: "配置渠道间故障转移行为",
 				Icon:        "🔁",
 				Order:       5,
 			},
@@ -382,8 +382,8 @@ func (s *SettingsService) getDefaultsForCategory(category string) []*store.Setti
 
 	case CategoryFailover:
 		return []*store.SettingRecord{
-			{Category: CategoryFailover, Key: "enabled", Value: "true", ValueType: ValueTypeBool, Label: "启用故障转移", Description: "当端点不可用时自动切换到备用端点", DisplayOrder: 1},
-			{Category: CategoryFailover, Key: "default_cooldown", Value: "600s", ValueType: ValueTypeDuration, Label: "默认冷却时间", Description: "端点故障后的冷却等待时间", DisplayOrder: 2},
+			{Category: CategoryFailover, Key: "enabled", Value: "true", ValueType: ValueTypeBool, Label: "启用渠道间故障转移", Description: "当当前渠道内所有端点均重试耗尽时，自动切换到备用渠道。渠道内端点切换默认开启，可通过端点「参与故障转移」关闭。", DisplayOrder: 1},
+			{Category: CategoryFailover, Key: "default_cooldown", Value: "600s", ValueType: ValueTypeDuration, Label: "默认冷却时间", Description: "请求级故障转移触发后，失败端点/失败渠道进入冷却的等待时间", DisplayOrder: 2},
 		}
 
 	case CategoryRequest:

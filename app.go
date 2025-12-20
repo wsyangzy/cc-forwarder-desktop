@@ -5,13 +5,17 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"cc-forwarder/config"
@@ -42,6 +46,7 @@ type App struct {
 	endpointManager      *endpoint.Manager
 	eventBus             events.EventBus // 接口类型，不是指针
 	usageTracker         *tracking.UsageTracker
+	storeDB              *sql.DB // v6.1+: 管理/配置专用 DB 连接，避免被 tracking 写入阻塞
 	proxyHandler         *proxy.Handler
 	loggingMiddleware    *middleware.LoggingMiddleware
 	monitoringMiddleware *middleware.MonitoringMiddleware
@@ -50,6 +55,10 @@ type App struct {
 	// v5.0+ 端点存储 (SQLite)
 	endpointStore   store.EndpointStore      // 端点数据持久化
 	endpointService *service.EndpointService // 端点业务服务
+
+	// v6.1+ 渠道存储 (SQLite)
+	channelStore   store.ChannelStore      // 渠道数据持久化
+	channelService *service.ChannelService // 渠道业务服务
 
 	// v5.0+ 模型定价存储 (SQLite)
 	modelPricingStore   store.ModelPricingStore      // 模型定价数据持久化
@@ -70,6 +79,7 @@ type App struct {
 	// 并发控制
 	mu        sync.RWMutex
 	isRunning bool
+	quitting  int32
 
 	// 日志处理器（用于查询和广播）
 	logHandler *logging.BroadcastHandler
@@ -87,8 +97,6 @@ func NewApp() *App {
 // 这里初始化所有组件并启动代理服务器
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
-	a.mu.Lock()
-	defer a.mu.Unlock()
 
 	// 1. 加载配置
 	a.loadConfig()
@@ -107,6 +115,9 @@ func (a *App) startup(ctx context.Context) {
 	// 5. 初始化使用追踪（SQLite 存储需要依赖数据库）
 	a.setupUsageTracker()
 
+	// 5.2 初始化管理/配置 DB（channels/endpoints/settings 等）
+	a.setupStoreDB()
+
 	// 5.5 初始化设置服务 (v5.1+ SQLite)
 	a.setupSettingsStore()
 
@@ -118,21 +129,18 @@ func (a *App) startup(ctx context.Context) {
 		a.emitEndpointUpdate()
 	})
 
-	// v5.x+ 设置故障转移回调，同步数据库状态
-	a.endpointManager.SetOnFailoverTriggered(func(failedEndpoint, newEndpoint string) {
-		// 同步数据库: 禁用失败的端点，启用新端点
+	// v6.0+ 设置故障转移回调：以“渠道(channel)”为单位同步数据库状态
+	a.endpointManager.SetOnFailoverTriggered(func(failedChannel, newChannel string) {
 		if a.endpointService != nil {
 			ctx := context.Background()
-			// 禁用失败的端点
-			if err := a.endpointService.ToggleEndpoint(ctx, failedEndpoint, false); err != nil {
-				slog.Warn(fmt.Sprintf("⚠️ [故障转移回调] 禁用端点失败: %s - %v", failedEndpoint, err))
+			if newChannel != "" {
+				if err := a.endpointService.ActivateChannel(ctx, newChannel); err != nil {
+					slog.Warn(fmt.Sprintf("⚠️ [故障转移回调] 激活新渠道失败: %s - %v", newChannel, err))
+				}
 			}
-			// 启用新端点
-			if err := a.endpointService.ToggleEndpoint(ctx, newEndpoint, true); err != nil {
-				slog.Warn(fmt.Sprintf("⚠️ [故障转移回调] 启用端点失败: %s - %v", newEndpoint, err))
-			}
-			slog.Info(fmt.Sprintf("✅ [故障转移回调] 数据库已同步: %s → %s", failedEndpoint, newEndpoint))
+			slog.Info(fmt.Sprintf("✅ [故障转移回调] 渠道已切换并同步数据库: %s → %s", failedChannel, newChannel))
 		}
+
 		// 推送事件到前端
 		a.emitEndpointUpdate()
 	})
@@ -181,50 +189,96 @@ func (a *App) startup(ctx context.Context) {
 // shutdown 在 Wails 应用关闭时调用
 func (a *App) shutdown(ctx context.Context) {
 	a.mu.Lock()
-	defer a.mu.Unlock()
+	logger := a.logger
+	proxyServer := a.proxyServer
+	usageTracker := a.usageTracker
+	storeDB := a.storeDB
+	endpointManager := a.endpointManager
+	eventBus := a.eventBus
+	configWatcher := a.configWatcher
+	logEmitter := a.logEmitter
+	a.isRunning = false
+	a.mu.Unlock()
 
-	a.logger.Info("🛑 正在关闭 CC-Forwarder...")
+	if logger != nil {
+		logger.Info("🛑 正在关闭 CC-Forwarder...")
+	}
 
 	// 1. 停止接收新请求
-	if a.proxyServer != nil {
-		shutdownCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	if proxyServer != nil {
+		shutdownCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 		defer cancel()
-		if err := a.proxyServer.Shutdown(shutdownCtx); err != nil {
-			a.logger.Error("代理服务器关闭失败", "error", err)
+		if err := proxyServer.Shutdown(shutdownCtx); err != nil {
+			_ = proxyServer.Close()
+			if logger != nil {
+				logger.Error("代理服务器关闭失败", "error", err)
+			}
 		}
 	}
 
 	// 2. 关闭使用追踪 (flush 数据库)
-	if a.usageTracker != nil {
-		if err := a.usageTracker.Close(); err != nil {
-			a.logger.Error("使用追踪器关闭失败", "error", err)
+	if usageTracker != nil {
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			if err := usageTracker.Close(); err != nil {
+				if logger != nil {
+					logger.Error("使用追踪器关闭失败", "error", err)
+				}
+			}
+		}()
+
+		select {
+		case <-done:
+		case <-time.After(3 * time.Second):
+			if logger != nil {
+				logger.Warn("使用追踪器关闭超时，强制继续退出")
+			}
+		}
+	}
+
+	// 2.1 关闭管理/配置 DB
+	if storeDB != nil {
+		if err := storeDB.Close(); err != nil {
+			if logger != nil {
+				logger.Error("管理数据库关闭失败", "error", err)
+			}
 		}
 	}
 
 	// 3. 关闭端点管理器
-	if a.endpointManager != nil {
-		a.endpointManager.Stop()
+	if endpointManager != nil {
+		endpointManager.Stop()
 	}
 
 	// 4. 关闭事件总线
-	if a.eventBus != nil {
-		if err := a.eventBus.Stop(); err != nil {
-			a.logger.Error("事件总线关闭失败", "error", err)
+	if eventBus != nil {
+		if err := eventBus.Stop(); err != nil {
+			if logger != nil {
+				logger.Error("事件总线关闭失败", "error", err)
+			}
 		}
 	}
 
 	// 5. 关闭配置监听
-	if a.configWatcher != nil {
-		a.configWatcher.Close()
+	if configWatcher != nil {
+		_ = configWatcher.Close()
 	}
 
 	// 6. 停止日志事件发射器
-	if a.logEmitter != nil {
-		a.logEmitter.Stop()
+	if logEmitter != nil {
+		logEmitter.Stop()
 	}
 
-	a.isRunning = false
-	a.logger.Info("✅ CC-Forwarder 已关闭")
+	a.mu.Lock()
+	a.proxyServer = nil
+	a.usageTracker = nil
+	a.storeDB = nil
+	a.mu.Unlock()
+
+	if logger != nil {
+		logger.Info("✅ CC-Forwarder 已关闭")
+	}
 }
 
 // domReady 在前端 DOM 准备就绪时调用
@@ -235,9 +289,15 @@ func (a *App) domReady(ctx context.Context) {
 
 // beforeClose 在窗口关闭前调用，返回 true 阻止关闭
 func (a *App) beforeClose(ctx context.Context) bool {
-	// 可以在这里询问用户是否确认关闭
-	// 或者最小化到托盘而不是关闭
-	return false
+	// Windows 下用户“关闭窗口”应直接退出进程，避免遗留后台代理服务进程。
+	if !atomic.CompareAndSwapInt32(&a.quitting, 0, 1) {
+		return false
+	}
+
+	// 主动触发应用退出；返回 true 阻止默认关闭流程（由 Quit 统一收口到 OnShutdown）。
+	// 注意：Quit 可能触发同步回调，避免在 BeforeClose 回调里阻塞 UI 线程。
+	go runtime.Quit(ctx)
+	return true
 }
 
 // loadConfig 加载配置
@@ -281,7 +341,8 @@ func (a *App) loadConfig() {
 
 	// ⚠️ 关键：立即覆盖所有路径为用户目录（在任何组件初始化之前）
 	cfg.Logging.FilePath = filepath.Join(utils.GetLogDir(), "app.log")
-	cfg.UsageTracking.DatabasePath = filepath.Join(utils.GetDataDir(), "usage.db")
+	// v6.1+：为避免与旧版本共享同一 usage.db 产生锁冲突，默认切换到新文件名，并在启动时自动迁移旧数据。
+	cfg.UsageTracking.DatabasePath = filepath.Join(utils.GetDataDir(), "cc-forwarder.db")
 
 	// 同时设置 Database 配置（如果存在）
 	if cfg.UsageTracking.Database != nil {
@@ -332,8 +393,11 @@ func (a *App) setupEndpointStore() {
 		return
 	}
 
-	// 获取数据库连接
-	db := a.usageTracker.GetDB()
+	// 获取数据库连接：优先使用 storeDB（避免 tracking 写入阻塞管理写操作）
+	db := a.storeDB
+	if db == nil && a.usageTracker != nil {
+		db = a.usageTracker.GetDB()
+	}
 	if db == nil {
 		a.logger.Error("❌ 无法获取数据库连接")
 		return
@@ -345,6 +409,10 @@ func (a *App) setupEndpointStore() {
 	// 创建 EndpointService
 	a.endpointService = service.NewEndpointService(a.endpointStore, a.endpointManager, a.config)
 
+	// 创建 ChannelStore / ChannelService
+	a.channelStore = store.NewSQLiteChannelStore(db)
+	a.channelService = service.NewChannelService(a.channelStore)
+
 	// 从数据库同步端点到内存
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -352,30 +420,30 @@ func (a *App) setupEndpointStore() {
 	if err := a.endpointService.SyncFromDatabase(ctx); err != nil {
 		a.logger.Warn("⚠️ 从数据库同步端点失败，使用 YAML 配置", "error", err)
 	} else {
+		// v6.1+: 回填渠道表，保证“端点删光后渠道仍存在”
+		if a.channelService != nil {
+			if added, err := a.channelService.BackfillChannelsFromEndpoints(ctx, a.endpointStore); err != nil {
+				a.logger.Warn("⚠️ 渠道回填失败", "error", err)
+			} else if added > 0 {
+				a.logger.Info("✅ 渠道回填完成", "count", added)
+			}
+		}
+
+		// v6.1+: 同步渠道优先级到运行时，用于渠道间故障转移顺序
+		a.syncChannelPrioritiesToEndpointManager(ctx)
 		a.logger.Info("✅ 端点存储已启用 (SQLite)")
 	}
 }
 
 // setupModelPricingStore 设置模型定价存储 (v5.0+ SQLite)
 func (a *App) setupModelPricingStore() {
-	// 使用 usageTracker 的数据库连接
-	if a.usageTracker == nil {
-		a.logger.Debug("模型定价存储跳过初始化 (usage_tracking 未启用)")
+	a.ensureModelPricingService()
+	if a.modelPricingService == nil {
+		if a.logger != nil {
+			a.logger.Debug("模型定价存储跳过初始化 (数据库未就绪)")
+		}
 		return
 	}
-
-	// 获取数据库连接
-	db := a.usageTracker.GetDB()
-	if db == nil {
-		a.logger.Error("❌ 无法获取数据库连接 (模型定价)")
-		return
-	}
-
-	// 创建 ModelPricingStore
-	a.modelPricingStore = store.NewSQLiteModelPricingStore(db)
-
-	// 创建 ModelPricingService
-	a.modelPricingService = service.NewModelPricingService(a.modelPricingStore)
 
 	// 检查是否需要初始化默认数据
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -403,6 +471,35 @@ func (a *App) setupModelPricingStore() {
 	a.logger.Info("✅ 模型定价存储已启用 (SQLite)", "count", count)
 }
 
+// ensureModelPricingService 确保模型定价服务已初始化。
+// 目的：避免因启动顺序/初始化失败导致前端提示“未启用”，同时不把模型定价强耦合到 UsageTracker 的生命周期。
+func (a *App) ensureModelPricingService() {
+	a.mu.RLock()
+	if a.modelPricingService != nil {
+		a.mu.RUnlock()
+		return
+	}
+	db := a.storeDB
+	if db == nil && a.usageTracker != nil {
+		db = a.usageTracker.GetDB()
+	}
+	a.mu.RUnlock()
+
+	if db == nil {
+		return
+	}
+
+	modelPricingStore := store.NewSQLiteModelPricingStore(db)
+	modelPricingService := service.NewModelPricingService(modelPricingStore)
+
+	a.mu.Lock()
+	if a.modelPricingService == nil {
+		a.modelPricingStore = modelPricingStore
+		a.modelPricingService = modelPricingService
+	}
+	a.mu.Unlock()
+}
+
 // initDefaultModelPricing 初始化默认模型定价数据
 func (a *App) initDefaultModelPricing(ctx context.Context) {
 	// Claude 官方定价 (2025年最新)
@@ -415,9 +512,9 @@ func (a *App) initDefaultModelPricing(ctx context.Context) {
 			Description:          "未知模型使用的默认定价",
 			InputPrice:           3.0,
 			OutputPrice:          15.0,
-			CacheCreationPrice5m: 3.75,  // 3.0 * 1.25
-			CacheCreationPrice1h: 6.0,   // 3.0 * 2.0
-			CacheReadPrice:       0.30,  // 3.0 * 0.1
+			CacheCreationPrice5m: 3.75, // 3.0 * 1.25
+			CacheCreationPrice1h: 6.0,  // 3.0 * 2.0
+			CacheReadPrice:       0.30, // 3.0 * 0.1
 			IsDefault:            true,
 		},
 		// Claude Sonnet 4
@@ -449,9 +546,9 @@ func (a *App) initDefaultModelPricing(ctx context.Context) {
 			Description:          "Claude 3.5 Haiku (2024-10-22)",
 			InputPrice:           0.80,
 			OutputPrice:          4.0,
-			CacheCreationPrice5m: 1.0,   // 0.80 * 1.25
-			CacheCreationPrice1h: 1.6,   // 0.80 * 2.0
-			CacheReadPrice:       0.08,  // 0.80 * 0.1
+			CacheCreationPrice5m: 1.0,  // 0.80 * 1.25
+			CacheCreationPrice1h: 1.6,  // 0.80 * 2.0
+			CacheReadPrice:       0.08, // 0.80 * 0.1
 		},
 		// Claude Opus 4
 		{
@@ -472,9 +569,9 @@ func (a *App) initDefaultModelPricing(ctx context.Context) {
 			Description:          "Claude Sonnet 4.5 (2025-09-29)",
 			InputPrice:           3.0,
 			OutputPrice:          15.0,
-			CacheCreationPrice5m: 3.75,  // 3.0 * 1.25
-			CacheCreationPrice1h: 6.0,   // 3.0 * 2.0
-			CacheReadPrice:       0.30,  // 3.0 * 0.1
+			CacheCreationPrice5m: 3.75, // 3.0 * 1.25
+			CacheCreationPrice1h: 6.0,  // 3.0 * 2.0
+			CacheReadPrice:       0.30, // 3.0 * 0.1
 		},
 		// Claude Haiku 4.5
 		{
@@ -494,9 +591,9 @@ func (a *App) initDefaultModelPricing(ctx context.Context) {
 			Description:          "Claude Opus 4.5 (2025-11-01)",
 			InputPrice:           5.0,
 			OutputPrice:          25.0,
-			CacheCreationPrice5m: 6.25,  // 5.0 * 1.25
-			CacheCreationPrice1h: 10.0,  // 5.0 * 2.0
-			CacheReadPrice:       0.50,  // 5.0 * 0.1
+			CacheCreationPrice5m: 6.25, // 5.0 * 1.25
+			CacheCreationPrice1h: 10.0, // 5.0 * 2.0
+			CacheReadPrice:       0.50, // 5.0 * 0.1
 		},
 		// ========== 旧版本兼容 ==========
 		{
@@ -525,9 +622,9 @@ func (a *App) initDefaultModelPricing(ctx context.Context) {
 			Description:          "Claude 3 Haiku (2024-03-07)",
 			InputPrice:           0.25,
 			OutputPrice:          1.25,
-			CacheCreationPrice5m: 0.31,   // 0.25 * 1.25
-			CacheCreationPrice1h: 0.50,   // 0.25 * 2.0
-			CacheReadPrice:       0.025,  // 0.25 * 0.1
+			CacheCreationPrice5m: 0.31,  // 0.25 * 1.25
+			CacheCreationPrice1h: 0.50,  // 0.25 * 2.0
+			CacheReadPrice:       0.025, // 0.25 * 0.1
 		},
 	}
 
@@ -602,10 +699,13 @@ func (a *App) setupUsageTracker() {
 
 	// 确保数据库路径不为空（防止 sqlite_adapter 使用默认相对路径）
 	if a.config.UsageTracking.DatabasePath == "" {
-		a.config.UsageTracking.DatabasePath = filepath.Join(utils.GetDataDir(), "usage.db")
+		a.config.UsageTracking.DatabasePath = filepath.Join(utils.GetDataDir(), "cc-forwarder.db")
 		a.logger.Warn("⚠️ DatabasePath 为空，已设置为用户目录",
 			"path", a.config.UsageTracking.DatabasePath)
 	}
+
+	// v6.1+ 自动迁移：如果新库不存在但旧库存在，则复制旧库到新路径。
+	a.migrateLegacyDatabaseIfNeeded()
 
 	a.logger.Info("📊 初始化使用追踪器", "db_path", a.config.UsageTracking.DatabasePath)
 
@@ -621,7 +721,7 @@ func (a *App) setupUsageTracker() {
 		MaxRetry:        a.config.UsageTracking.MaxRetry,
 		RetentionDays:   a.config.UsageTracking.RetentionDays,
 		CleanupInterval: a.config.UsageTracking.CleanupInterval,
-		ModelPricing:    nil, // v5.0+: 定价从 SQLite model_pricing 表加载
+		ModelPricing:    nil,                     // v5.0+: 定价从 SQLite model_pricing 表加载
 		DefaultPricing:  tracking.ModelPricing{}, // v5.0+: 默认定价从 SQLite 加载
 	}
 
@@ -633,6 +733,292 @@ func (a *App) setupUsageTracker() {
 	}
 
 	a.logger.Info("📊 使用追踪已启用", "database", a.config.UsageTracking.DatabasePath)
+}
+
+// setupStoreDB 初始化一个专用的 SQLite 连接用于管理写操作（channels/endpoints/settings）。
+// 目的：避免 UsageTracker 的后台写入/归档在同一连接上阻塞 UI 管理操作，造成“前端超时但最终成功”的错觉。
+func (a *App) setupStoreDB() {
+	if a.usageTracker == nil || a.config == nil {
+		return
+	}
+	if a.storeDB != nil {
+		return
+	}
+	dbPath := a.config.UsageTracking.DatabasePath
+	if dbPath == "" {
+		return
+	}
+
+	// 使用适中的 busy_timeout：降低“瞬时锁争用”带来的偶发失败，同时由上层 ctx 超时控制整体等待。
+	dsn := dbPath + "?_journal_mode=WAL&_synchronous=NORMAL&_cache_size=10000&_foreign_keys=1&_busy_timeout=10000"
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		a.logger.Warn("⚠️ 初始化管理数据库连接失败", "error", err)
+		return
+	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	db.SetConnMaxLifetime(0)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := db.PingContext(ctx); err != nil {
+		_ = db.Close()
+		a.logger.Warn("⚠️ 管理数据库连接不可用", "error", err)
+		return
+	}
+
+	a.storeDB = db
+	a.logger.Info("✅ 管理数据库连接已就绪", "db", dbPath)
+}
+
+// migrateLegacyDatabaseIfNeeded 将旧版本默认库 usage.db 迁移到新版本默认库 cc-forwarder.db。
+// 目的：避免新旧版本同时运行时共享同一 SQLite 文件导致锁冲突（创建渠道/写入配置“无响应”）。
+func (a *App) migrateLegacyDatabaseIfNeeded() {
+	newPath := a.config.UsageTracking.DatabasePath
+	if newPath == "" {
+		return
+	}
+
+	// 仅对默认路径场景启用迁移，避免覆盖用户显式配置
+	defaultNew := filepath.Join(utils.GetDataDir(), "cc-forwarder.db")
+	defaultOld := filepath.Join(utils.GetDataDir(), "usage.db")
+	if filepath.Clean(newPath) != filepath.Clean(defaultNew) {
+		return
+	}
+
+	legacyCandidates := []string{defaultOld}
+
+	// 兼容旧版本可能使用的相对路径（例如安装目录/data/usage.db 或运行目录/data/usage.db）
+	if exe, err := os.Executable(); err == nil {
+		exeDir := filepath.Dir(exe)
+		legacyCandidates = append(legacyCandidates, filepath.Join(exeDir, "data", "usage.db"))
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		legacyCandidates = append(legacyCandidates, filepath.Join(cwd, "data", "usage.db"))
+	}
+
+	legacyPath := ""
+	for _, p := range legacyCandidates {
+		if p == "" {
+			continue
+		}
+		if _, err := os.Stat(p); err == nil {
+			legacyPath = p
+			break
+		}
+	}
+	if legacyPath == "" {
+		return
+	}
+
+	// 场景1：新库不存在 -> 直接复制（最简单、最稳定）
+	if _, err := os.Stat(defaultNew); err != nil {
+		if err := copyFile(legacyPath, defaultNew); err != nil {
+			a.logger.Warn("⚠️ 旧数据迁移失败，将使用新的空数据库（可在关闭旧版本后重启再迁移）",
+				"old", legacyPath, "new", defaultNew, "error", err)
+			a.emitNotification("warning", "旧数据迁移失败", "无法复制旧数据库（可能被旧版本占用），将使用新的空数据库；关闭旧版本后重启可再次尝试迁移。")
+			return
+		}
+
+		a.logger.Info("✅ 旧数据迁移完成", "old", legacyPath, "new", defaultNew)
+		a.emitNotification("success", "旧数据已迁移", "已将旧版本数据库迁移到新数据库文件（避免新旧版本冲突）。")
+		return
+	}
+
+	// 场景2：新库已存在，但用户反馈“请求追踪历史丢失”：
+	// 多见于新库已被创建（空库）导致复制迁移跳过。此时只导入 request_logs/usage_summary，避免覆盖新库中的配置类表。
+	newReqCount, _ := countTableRows(defaultNew, "request_logs")
+	oldReqCount, _ := countTableRows(legacyPath, "request_logs")
+	if newReqCount > 0 || oldReqCount <= 0 {
+		return
+	}
+
+	if err := importTrackingTables(defaultNew, legacyPath); err != nil {
+		a.logger.Warn("⚠️ 旧请求记录导入失败", "old", legacyPath, "new", defaultNew, "error", err)
+		a.emitNotification("warning", "旧请求记录导入失败", "检测到旧数据库存在，但导入请求追踪记录失败；请稍后重试或联系开发者。")
+		return
+	}
+
+	a.logger.Info("✅ 已导入旧请求记录", "old", legacyPath, "new", defaultNew)
+	a.emitNotification("success", "旧请求记录已导入", "已从旧数据库导入请求追踪历史到新数据库（不会覆盖渠道/端点等配置）。")
+}
+
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = out.Close()
+	}()
+
+	if _, err := io.Copy(out, in); err != nil {
+		return err
+	}
+	return out.Sync()
+}
+
+func countTableRows(dbPath, table string) (int64, error) {
+	if dbPath == "" || table == "" {
+		return 0, nil
+	}
+	dsn := dbPath + "?_busy_timeout=2000"
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return 0, err
+	}
+	defer db.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	// table 名仅允许字母数字下划线，避免拼接 SQL 注入
+	for _, r := range table {
+		if !(r == '_' || (r >= '0' && r <= '9') || (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z')) {
+			return 0, fmt.Errorf("invalid table name: %s", table)
+		}
+	}
+
+	var count int64
+	row := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+table)
+	if err := row.Scan(&count); err != nil {
+		// 例如表不存在：当作 0
+		return 0, nil
+	}
+	return count, nil
+}
+
+func importTrackingTables(dstDBPath, legacyDBPath string) error {
+	if dstDBPath == "" || legacyDBPath == "" {
+		return nil
+	}
+
+	dsn := dstDBPath + "?_journal_mode=WAL&_synchronous=NORMAL&_foreign_keys=1&_busy_timeout=10000"
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	legacyEscaped := strings.ReplaceAll(legacyDBPath, "'", "''")
+	if _, err := db.ExecContext(ctx, "ATTACH DATABASE '"+legacyEscaped+"' AS legacy"); err != nil {
+		return fmt.Errorf("attach legacy database failed: %w", err)
+	}
+	defer func() {
+		_, _ = db.ExecContext(context.Background(), "DETACH DATABASE legacy")
+	}()
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// 仅导入追踪相关表，避免覆盖配置类数据
+	for _, table := range []string{"request_logs", "usage_summary"} {
+		cols, err := commonTableColumns(ctx, tx, table)
+		if err != nil {
+			continue
+		}
+		cols = filterOut(cols, "id")
+		if len(cols) == 0 {
+			continue
+		}
+
+		colList := make([]string, 0, len(cols))
+		for _, c := range cols {
+			colList = append(colList, `"`+c+`"`)
+		}
+		colCSV := strings.Join(colList, ", ")
+
+		sqlStmt := fmt.Sprintf(
+			"INSERT OR IGNORE INTO %s (%s) SELECT %s FROM legacy.%s",
+			table, colCSV, colCSV, table,
+		)
+		if _, err := tx.ExecContext(ctx, sqlStmt); err != nil {
+			continue
+		}
+	}
+
+	return tx.Commit()
+}
+
+func commonTableColumns(ctx context.Context, q interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}, table string) ([]string, error) {
+	mainCols, err := tableColumns(ctx, q, "main", table)
+	if err != nil {
+		return nil, err
+	}
+	legacyCols, err := tableColumns(ctx, q, "legacy", table)
+	if err != nil {
+		return nil, err
+	}
+
+	legacySet := make(map[string]struct{}, len(legacyCols))
+	for _, c := range legacyCols {
+		legacySet[c] = struct{}{}
+	}
+	common := make([]string, 0, len(mainCols))
+	for _, c := range mainCols {
+		if _, ok := legacySet[c]; ok {
+			common = append(common, c)
+		}
+	}
+	return common, nil
+}
+
+func tableColumns(ctx context.Context, q interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}, schema, table string) ([]string, error) {
+	rows, err := q.QueryContext(ctx, "PRAGMA "+schema+".table_info("+table+")")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var cols []string
+	for rows.Next() {
+		var cid int
+		var name string
+		var typ string
+		var notnull int
+		var dflt sql.NullString
+		var pk int
+		if err := rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk); err != nil {
+			continue
+		}
+		if name != "" {
+			cols = append(cols, name)
+		}
+	}
+	return cols, nil
+}
+
+func filterOut(cols []string, disallow string) []string {
+	if disallow == "" {
+		return cols
+	}
+	out := make([]string, 0, len(cols))
+	for _, c := range cols {
+		if c == disallow {
+			continue
+		}
+		out = append(out, c)
+	}
+	return out
 }
 
 // setupProxyHandler 设置代理处理器
@@ -887,8 +1273,11 @@ func (a *App) setupSettingsStore() {
 		return
 	}
 
-	// 获取数据库连接
-	db := a.usageTracker.GetDB()
+	// 获取数据库连接：优先使用 storeDB
+	db := a.storeDB
+	if db == nil {
+		db = a.usageTracker.GetDB()
+	}
 	if db == nil {
 		a.logger.Error("❌ 无法获取数据库连接 (设置存储)")
 		return

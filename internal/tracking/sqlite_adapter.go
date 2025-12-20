@@ -63,10 +63,10 @@ func (s *SQLiteAdapter) Open() error {
 	dbPath := s.config.DatabasePath
 	if dbPath == "" {
 		// 使用跨平台用户目录作为默认路径
-		// Windows: %APPDATA%\CC-Forwarder\data\usage.db
-		// macOS: ~/Library/Application Support/CC-Forwarder/data/usage.db
-		// Linux: ~/.local/share/cc-forwarder/data/usage.db
-		dbPath = filepath.Join(getSQLiteAppDataDir(), "data", "usage.db")
+		// Windows: %APPDATA%\CC-Forwarder\data\cc-forwarder.db
+		// macOS: ~/Library/Application Support/CC-Forwarder/data/cc-forwarder.db
+		// Linux: ~/.local/share/cc-forwarder/data/cc-forwarder.db
+		dbPath = filepath.Join(getSQLiteAppDataDir(), "data", "cc-forwarder.db")
 		s.logger.Info("使用默认数据库路径", "path", dbPath)
 	}
 
@@ -89,7 +89,7 @@ func (s *SQLiteAdapter) Open() error {
 	}
 
 	// 设置连接池参数（SQLite建议少量连接）
-	db.SetMaxOpenConns(1)  // SQLite写操作需要单一连接
+	db.SetMaxOpenConns(1) // SQLite写操作需要单一连接
 	db.SetMaxIdleConns(1)
 	db.SetConnMaxLifetime(0)
 
@@ -181,7 +181,8 @@ func (s *SQLiteAdapter) InitSchema() error {
 
 // migrateSchema 执行数据库迁移（v5.0.1+: 添加 5m/1h 缓存字段）
 func (s *SQLiteAdapter) migrateSchema(ctx context.Context) error {
-	migrations := []struct {
+	// request_logs 迁移：历史上先上线 usage tracking，后续补充缓存字段
+	requestLogMigrations := []struct {
 		checkColumn string
 		alterSQL    string
 		description string
@@ -208,22 +209,122 @@ func (s *SQLiteAdapter) migrateSchema(ctx context.Context) error {
 		},
 	}
 
-	for _, m := range migrations {
-		exists, err := s.columnExists(ctx, "request_logs", m.checkColumn)
+	// endpoints 迁移：端点存储表迭代新增字段时，需要兼容旧 db（CREATE TABLE IF NOT EXISTS 不会补列）
+	endpointsMigrations := []struct {
+		checkColumn string
+		alterSQL    string
+		description string
+	}{
+		{
+			checkColumn: "timeout_seconds",
+			alterSQL:    "ALTER TABLE endpoints ADD COLUMN timeout_seconds INTEGER DEFAULT 300",
+			description: "端点超时字段",
+		},
+		{
+			checkColumn: "supports_count_tokens",
+			alterSQL:    "ALTER TABLE endpoints ADD COLUMN supports_count_tokens INTEGER DEFAULT 0",
+			description: "端点 supports_count_tokens 字段",
+		},
+		{
+			checkColumn: "cost_multiplier",
+			alterSQL:    "ALTER TABLE endpoints ADD COLUMN cost_multiplier REAL DEFAULT 1.0",
+			description: "端点总成本倍率字段",
+		},
+		{
+			checkColumn: "input_cost_multiplier",
+			alterSQL:    "ALTER TABLE endpoints ADD COLUMN input_cost_multiplier REAL DEFAULT 1.0",
+			description: "端点输入成本倍率字段",
+		},
+		{
+			checkColumn: "output_cost_multiplier",
+			alterSQL:    "ALTER TABLE endpoints ADD COLUMN output_cost_multiplier REAL DEFAULT 1.0",
+			description: "端点输出成本倍率字段",
+		},
+		{
+			checkColumn: "cache_creation_cost_multiplier",
+			alterSQL:    "ALTER TABLE endpoints ADD COLUMN cache_creation_cost_multiplier REAL DEFAULT 1.0",
+			description: "端点 5m 缓存创建成本倍率字段",
+		},
+		{
+			checkColumn: "cache_creation_cost_multiplier_1h",
+			alterSQL:    "ALTER TABLE endpoints ADD COLUMN cache_creation_cost_multiplier_1h REAL DEFAULT 1.0",
+			description: "端点 1h 缓存创建成本倍率字段",
+		},
+		{
+			checkColumn: "cache_read_cost_multiplier",
+			alterSQL:    "ALTER TABLE endpoints ADD COLUMN cache_read_cost_multiplier REAL DEFAULT 1.0",
+			description: "端点缓存读取成本倍率字段",
+		},
+	}
+
+	// channels 迁移：早期可能只有 name，后续新增 website
+	channelMigrations := []struct {
+		checkColumn string
+		alterSQL    string
+		description string
+	}{
+		{
+			checkColumn: "website",
+			alterSQL:    "ALTER TABLE channels ADD COLUMN website TEXT",
+			description: "渠道官网字段",
+		},
+		{
+			checkColumn: "priority",
+			alterSQL:    "ALTER TABLE channels ADD COLUMN priority INTEGER DEFAULT 1",
+			description: "渠道优先级字段",
+		},
+	}
+
+	runMigrations := func(table string, migrations []struct {
+		checkColumn string
+		alterSQL    string
+		description string
+	}) error {
+		tableExists, err := s.tableExists(ctx, table)
 		if err != nil {
-			return fmt.Errorf("failed to check column %s: %w", m.checkColumn, err)
+			return fmt.Errorf("failed to check table %s: %w", table, err)
+		}
+		if !tableExists {
+			return nil
 		}
 
-		if !exists {
-			s.logger.Info(fmt.Sprintf("🔧 [数据库迁移] 添加 %s", m.description))
-			if _, err := s.db.ExecContext(ctx, m.alterSQL); err != nil {
-				return fmt.Errorf("failed to add column %s: %w", m.checkColumn, err)
+		for _, m := range migrations {
+			exists, err := s.columnExists(ctx, table, m.checkColumn)
+			if err != nil {
+				return fmt.Errorf("failed to check column %s.%s: %w", table, m.checkColumn, err)
 			}
-			s.logger.Info(fmt.Sprintf("✅ [数据库迁移] %s 添加成功", m.description))
+			if exists {
+				continue
+			}
+
+			s.logger.Info(fmt.Sprintf("🔧 [数据库迁移] %s：添加 %s", table, m.description))
+			if _, err := s.db.ExecContext(ctx, m.alterSQL); err != nil {
+				return fmt.Errorf("failed to add column %s.%s: %w", table, m.checkColumn, err)
+			}
+			s.logger.Info(fmt.Sprintf("✅ [数据库迁移] %s：%s 添加成功", table, m.description))
 		}
+		return nil
+	}
+
+	if err := runMigrations("request_logs", requestLogMigrations); err != nil {
+		return err
+	}
+	if err := runMigrations("endpoints", endpointsMigrations); err != nil {
+		return err
+	}
+	if err := runMigrations("channels", channelMigrations); err != nil {
+		return err
 	}
 
 	return nil
+}
+
+func (s *SQLiteAdapter) tableExists(ctx context.Context, table string) (bool, error) {
+	var count int
+	if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name = ?", table).Scan(&count); err != nil {
+		return false, err
+	}
+	return count > 0, nil
 }
 
 // columnExists 检查表中是否存在指定列

@@ -18,12 +18,20 @@ export function CheckPortAvailable(arg1) {
   return window['go']['main']['App']['CheckPortAvailable'](arg1);
 }
 
+export function CreateChannel(arg1) {
+  return window['go']['main']['App']['CreateChannel'](arg1);
+}
+
 export function CreateEndpointRecord(arg1) {
   return window['go']['main']['App']['CreateEndpointRecord'](arg1);
 }
 
 export function CreateModelPricing(arg1) {
   return window['go']['main']['App']['CreateModelPricing'](arg1);
+}
+
+export function DeleteChannel(arg1, arg2) {
+  return window['go']['main']['App']['DeleteChannel'](arg1, arg2);
 }
 
 export function DeleteEndpointRecord(arg1) {
@@ -178,6 +186,10 @@ export function SetDefaultModelPricing(arg1) {
   return window['go']['main']['App']['SetDefaultModelPricing'](arg1);
 }
 
+export function SetEndpointFailoverEnabled(arg1, arg2) {
+  return window['go']['main']['App']['SetEndpointFailoverEnabled'](arg1, arg2);
+}
+
 export function SetEndpointPriority(arg1, arg2) {
   return window['go']['main']['App']['SetEndpointPriority'](arg1, arg2);
 }
@@ -200,6 +212,10 @@ export function ToggleEndpointRecord(arg1, arg2) {
 
 export function TriggerHealthCheck(arg1) {
   return window['go']['main']['App']['TriggerHealthCheck'](arg1);
+}
+
+export function UpdateChannel(arg1) {
+  return window['go']['main']['App']['UpdateChannel'](arg1);
 }
 
 export function UpdateEndpointRecord(arg1, arg2) {

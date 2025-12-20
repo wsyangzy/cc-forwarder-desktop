@@ -133,7 +133,11 @@ func (rh *RegularHandler) HandleRegularRequestUnified(ctx context.Context, w htt
 		// 内层循环处理端点重试
 		groupSwitchNeeded := false
 		for i, endpoint := range endpoints {
-			lifecycleManager.SetEndpoint(endpoint.Config.Name, endpoint.Config.Group, endpoint.Config.Channel)
+			routeGroup := endpoint.Config.Channel
+			if routeGroup == "" {
+				routeGroup = endpoint.Config.Name
+			}
+			lifecycleManager.SetEndpoint(endpoint.Config.Name, routeGroup, endpoint.Config.Channel)
 			lifecycleManager.UpdateStatus("forwarding", i, 0)
 
 			// 🔧 [端点上下文修复] 立即设置端点信息到请求上下文，确保所有分支（成功/失败/取消）的日志都能正确记录端点
@@ -190,7 +194,7 @@ func (rh *RegularHandler) HandleRegularRequestUnified(ctx context.Context, w htt
 				}
 
 				// 🔧 使用增强的RetryManager进行统一决策
-				errorCtx := errorRecovery.ClassifyError(err, connID, endpoint.Config.Name, endpoint.Config.Group, attempt-1)
+				errorCtx := errorRecovery.ClassifyError(err, connID, endpoint.Config.Name, routeGroup, attempt-1)
 
 				// 🚀 [状态机重构] Phase 4: 分离状态转换与失败原因记录
 				// 预设错误上下文（避免重复分类），由HandleError统一记录失败原因
@@ -290,14 +294,33 @@ func (rh *RegularHandler) HandleRegularRequestUnified(ctx context.Context, w htt
 		if len(endpoints) > 0 {
 			lastEndpoint := endpoints[len(endpoints)-1]
 
-			newEndpointName, err := rh.endpointManager.TriggerRequestFailover(
-				lastEndpoint.Config.Name,
+			// v6.0+：跨渠道切换时，将本次请求中失败过的端点统一进入冷却，避免下一次请求立即重复撞同一批端点
+			failedEndpointNames := make([]string, 0, len(endpoints))
+			seen := make(map[string]struct{}, len(endpoints))
+			for _, ep := range endpoints {
+				name := ep.Config.Name
+				if name == "" {
+					continue
+				}
+				if _, ok := seen[name]; ok {
+					continue
+				}
+				seen[name] = struct{}{}
+				failedEndpointNames = append(failedEndpointNames, name)
+			}
+
+			newChannel, err := rh.endpointManager.TriggerRequestFailoverWithFailedEndpoints(
+				failedEndpointNames,
 				"all_retries_exhausted",
 			)
 
-			if err == nil && newEndpointName != "" {
-				slog.Info(fmt.Sprintf("🔄 [请求级故障转移] [%s] 端点 %s 进入冷却，切换到 %s",
-					connID, lastEndpoint.Config.Name, newEndpointName))
+			if err == nil && newChannel != "" {
+				failedChannel := lastEndpoint.Config.Channel
+				if failedChannel == "" {
+					failedChannel = lastEndpoint.Config.Name
+				}
+				slog.Info(fmt.Sprintf("🔄 [请求级故障转移] [%s] 渠道 %s (端点 %s) 已耗尽，切换到渠道 %s",
+					connID, failedChannel, lastEndpoint.Config.Name, newChannel))
 				// 故障转移成功，重新获取端点列表继续处理
 				groupSwitchNeeded = true
 				continue
@@ -353,7 +376,11 @@ func (rh *RegularHandler) HandleRegularRequestUnified(ctx context.Context, w htt
 				// 🔧 [生命周期修复] 恢复时必须更新生命周期管理器的端点信息
 				// 设置第一个新端点的信息到生命周期管理器
 				firstEndpoint := newEndpoints[0]
-				lifecycleManager.SetEndpoint(firstEndpoint.Config.Name, firstEndpoint.Config.Group, firstEndpoint.Config.Channel)
+				firstRouteGroup := firstEndpoint.Config.Channel
+				if firstRouteGroup == "" {
+					firstRouteGroup = firstEndpoint.Config.Name
+				}
+				lifecycleManager.SetEndpoint(firstEndpoint.Config.Name, firstRouteGroup, firstEndpoint.Config.Channel)
 
 				// 重新获取健康端点并重新尝试（递归调用）
 				rh.HandleRegularRequestUnified(ctx, w, r, bodyBytes, lifecycleManager)

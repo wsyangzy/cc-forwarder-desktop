@@ -5,10 +5,13 @@ package main
 
 import (
 	"context"
+	"log/slog"
 	"time"
 
 	"cc-forwarder/internal/tracking"
 )
+
+const usageDBQueryTimeout = 8 * time.Second
 
 // ============================================================
 // 使用统计 API
@@ -16,18 +19,18 @@ import (
 
 // UsageSummary 使用统计摘要
 type UsageSummary struct {
-	TotalRequests           int64   `json:"total_requests"`              // 运行时请求数
-	AllTimeTotalRequests    int64   `json:"all_time_total_requests"`     // 全部历史请求数（数据库）
-	TodayRequests           int64   `json:"today_requests"`              // 今日请求数（数据库）
-	SuccessRequests         int64   `json:"success_requests"`
-	FailedRequests          int64   `json:"failed_requests"`
-	TotalInputTokens        int64   `json:"total_input_tokens"`
-	TotalOutputTokens       int64   `json:"total_output_tokens"`
-	TotalCost               float64 `json:"total_cost"`                  // 运行时成本
-	TodayCost               float64 `json:"today_cost"`                  // 今日成本（数据库）
-	AllTimeTotalCost        float64 `json:"all_time_total_cost"`         // 全部历史成本（数据库）
-	TodayTokens             int64   `json:"today_tokens"`                // 今日 tokens（数据库）
-	AllTimeTotalTokens      int64   `json:"all_time_total_tokens"`       // 全部历史 tokens（数据库）
+	TotalRequests        int64   `json:"total_requests"`          // 运行时请求数
+	AllTimeTotalRequests int64   `json:"all_time_total_requests"` // 全部历史请求数（数据库）
+	TodayRequests        int64   `json:"today_requests"`          // 今日请求数（数据库）
+	SuccessRequests      int64   `json:"success_requests"`
+	FailedRequests       int64   `json:"failed_requests"`
+	TotalInputTokens     int64   `json:"total_input_tokens"`
+	TotalOutputTokens    int64   `json:"total_output_tokens"`
+	TotalCost            float64 `json:"total_cost"`            // 运行时成本
+	TodayCost            float64 `json:"today_cost"`            // 今日成本（数据库）
+	AllTimeTotalCost     float64 `json:"all_time_total_cost"`   // 全部历史成本（数据库）
+	TodayTokens          int64   `json:"today_tokens"`          // 今日 tokens（数据库）
+	AllTimeTotalTokens   int64   `json:"all_time_total_tokens"` // 全部历史 tokens（数据库）
 }
 
 // GetUsageSummary 获取使用统计摘要
@@ -35,16 +38,20 @@ type UsageSummary struct {
 // 当传递时间参数时，返回历史数据（从数据库）
 func (a *App) GetUsageSummary(startTimeStr, endTimeStr string) (UsageSummary, error) {
 	a.mu.RLock()
-	defer a.mu.RUnlock()
+	monitoringMiddleware := a.monitoringMiddleware
+	usageTracker := a.usageTracker
+	cfg := a.config
+	logger := a.logger
+	a.mu.RUnlock()
 
 	// 如果没有传递时间参数，返回运行时统计（与 Web 版本 /api/v1/connections 一致）
 	if startTimeStr == "" && endTimeStr == "" {
-		if a.monitoringMiddleware == nil {
+		if monitoringMiddleware == nil {
 			return UsageSummary{}, nil
 		}
 
 		// 从内存中获取运行时统计
-		metrics := a.monitoringMiddleware.GetMetrics()
+		metrics := monitoringMiddleware.GetMetrics()
 		stats := metrics.GetMetrics()
 
 		// 计算总 Token
@@ -59,45 +66,47 @@ func (a *App) GetUsageSummary(startTimeStr, endTimeStr string) (UsageSummary, er
 		var todayTokens int64
 		var todayRequests int64
 
-		if a.usageTracker != nil {
-			ctx := context.Background()
-
+		if usageTracker != nil {
 			// 获取配置的时区
 			loc := time.Local
-			if a.config != nil && a.config.Timezone != "" {
-				if parsedLoc, err := time.LoadLocation(a.config.Timezone); err == nil {
+			if cfg != nil && cfg.Timezone != "" {
+				if parsedLoc, err := time.LoadLocation(cfg.Timezone); err == nil {
 					loc = parsedLoc
 				}
 			}
 
 			// 直接从 request_logs 表查询全部历史统计
-			allTimeTotalCost, allTimeTotalTokens, allTimeTotal = a.queryStatsFromDB(ctx, time.Time{}, time.Now())
+			ctx, cancel := context.WithTimeout(context.Background(), usageDBQueryTimeout)
+			allTimeTotalCost, allTimeTotalTokens, allTimeTotal = queryStatsFromDB(ctx, logger, usageTracker, time.Time{}, time.Now())
+			cancel()
 
 			// 查询今日统计（使用配置的时区）
 			now := time.Now().In(loc)
 			todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
 			todayEnd := todayStart.Add(24 * time.Hour)
-			todayCost, todayTokens, todayRequests = a.queryStatsFromDB(ctx, todayStart, todayEnd)
+			ctx, cancel = context.WithTimeout(context.Background(), usageDBQueryTimeout)
+			todayCost, todayTokens, todayRequests = queryStatsFromDB(ctx, logger, usageTracker, todayStart, todayEnd)
+			cancel()
 		}
 
 		return UsageSummary{
-			TotalRequests:           stats.TotalRequests,
-			AllTimeTotalRequests:    allTimeTotal,
-			TodayRequests:           todayRequests,
-			SuccessRequests:         stats.SuccessfulRequests,
-			FailedRequests:          stats.FailedRequests,
-			TotalInputTokens:        totalInputTokens,
-			TotalOutputTokens:       totalOutputTokens,
-			TotalCost:               0, // 运行时统计不计算成本
-			TodayCost:               todayCost,
-			AllTimeTotalCost:        allTimeTotalCost,
-			TodayTokens:             todayTokens,
-			AllTimeTotalTokens:      allTimeTotalTokens,
+			TotalRequests:        stats.TotalRequests,
+			AllTimeTotalRequests: allTimeTotal,
+			TodayRequests:        todayRequests,
+			SuccessRequests:      stats.SuccessfulRequests,
+			FailedRequests:       stats.FailedRequests,
+			TotalInputTokens:     totalInputTokens,
+			TotalOutputTokens:    totalOutputTokens,
+			TotalCost:            0, // 运行时统计不计算成本
+			TodayCost:            todayCost,
+			AllTimeTotalCost:     allTimeTotalCost,
+			TodayTokens:          todayTokens,
+			AllTimeTotalTokens:   allTimeTotalTokens,
 		}, nil
 	}
 
 	// 传递了时间参数，从数据库查询历史数据
-	if a.usageTracker == nil {
+	if usageTracker == nil {
 		return UsageSummary{}, nil
 	}
 
@@ -123,8 +132,9 @@ func (a *App) GetUsageSummary(startTimeStr, endTimeStr string) (UsageSummary, er
 		endTime = time.Now()
 	}
 
-	ctx := context.Background()
-	summaries, err := a.usageTracker.GetUsageSummary(ctx, startTime, endTime)
+	ctx, cancel := context.WithTimeout(context.Background(), usageDBQueryTimeout)
+	defer cancel()
+	summaries, err := usageTracker.GetUsageSummary(ctx, startTime, endTime)
 	if err != nil {
 		return UsageSummary{}, err
 	}
@@ -144,12 +154,12 @@ func (a *App) GetUsageSummary(startTimeStr, endTimeStr string) (UsageSummary, er
 }
 
 // queryStatsFromDB 直接从 request_logs 表查询成本、tokens 和请求数
-func (a *App) queryStatsFromDB(ctx context.Context, startTime, endTime time.Time) (cost float64, tokens int64, requests int64) {
-	if a.usageTracker == nil {
+func queryStatsFromDB(ctx context.Context, logger *slog.Logger, usageTracker *tracking.UsageTracker, startTime, endTime time.Time) (cost float64, tokens int64, requests int64) {
+	if usageTracker == nil {
 		return 0, 0, 0
 	}
 
-	db := a.usageTracker.GetDB()
+	db := usageTracker.GetDB()
 	if db == nil {
 		return 0, 0, 0
 	}
@@ -168,7 +178,9 @@ func (a *App) queryStatsFromDB(ctx context.Context, startTime, endTime time.Time
 
 	err := db.QueryRowContext(ctx, query, args...).Scan(&cost, &tokens, &requests)
 	if err != nil {
-		a.logger.Debug("查询统计数据失败", "error", err)
+		if logger != nil {
+			logger.Debug("查询统计数据失败", "error", err)
+		}
 		return 0, 0, 0
 	}
 
@@ -177,27 +189,27 @@ func (a *App) queryStatsFromDB(ctx context.Context, startTime, endTime time.Time
 
 // RequestRecord 请求记录
 type RequestRecord struct {
-	ID                     string  `json:"id"`
-	RequestID              string  `json:"request_id"`
-	Timestamp              string  `json:"timestamp"`
-	Channel                string  `json:"channel"` // v5.0: 渠道标签
-	Endpoint               string  `json:"endpoint"`
-	Group                  string  `json:"group"`
-	Model                  string  `json:"model"`
-	Status                 string  `json:"status"`
-	HTTPStatus             int     `json:"http_status"`
-	RetryCount             int     `json:"retry_count"`              // 重试次数
-	FailureReason          string  `json:"failure_reason,omitempty"` // 失败原因
-	CancelReason           string  `json:"cancel_reason,omitempty"`  // 取消原因
-	InputTokens            int64   `json:"input_tokens"`
-	OutputTokens           int64   `json:"output_tokens"`
-	CacheCreationTokens    int64   `json:"cache_creation_tokens"`     // 总缓存创建（向后兼容）
-	CacheCreation5mTokens  int64   `json:"cache_creation_5m_tokens"`  // v5.0.1: 5分钟缓存
-	CacheCreation1hTokens  int64   `json:"cache_creation_1h_tokens"`  // v5.0.1: 1小时缓存
-	CacheReadTokens        int64   `json:"cache_read_tokens"`
-	ResponseTime           int64   `json:"response_time"`
-	IsStreaming            bool    `json:"is_streaming"`
-	Cost                   float64 `json:"cost"`
+	ID                    string  `json:"id"`
+	RequestID             string  `json:"request_id"`
+	Timestamp             string  `json:"timestamp"`
+	Channel               string  `json:"channel"` // v5.0: 渠道标签
+	Endpoint              string  `json:"endpoint"`
+	Group                 string  `json:"group"`
+	Model                 string  `json:"model"`
+	Status                string  `json:"status"`
+	HTTPStatus            int     `json:"http_status"`
+	RetryCount            int     `json:"retry_count"`              // 重试次数
+	FailureReason         string  `json:"failure_reason,omitempty"` // 失败原因
+	CancelReason          string  `json:"cancel_reason,omitempty"`  // 取消原因
+	InputTokens           int64   `json:"input_tokens"`
+	OutputTokens          int64   `json:"output_tokens"`
+	CacheCreationTokens   int64   `json:"cache_creation_tokens"`    // 总缓存创建（向后兼容）
+	CacheCreation5mTokens int64   `json:"cache_creation_5m_tokens"` // v5.0.1: 5分钟缓存
+	CacheCreation1hTokens int64   `json:"cache_creation_1h_tokens"` // v5.0.1: 1小时缓存
+	CacheReadTokens       int64   `json:"cache_read_tokens"`
+	ResponseTime          int64   `json:"response_time"`
+	IsStreaming           bool    `json:"is_streaming"`
+	Cost                  float64 `json:"cost"`
 }
 
 // RequestListResult 请求列表结果
@@ -225,9 +237,11 @@ type RequestQueryParams struct {
 // 支持筛选参数：时间范围、状态、模型等
 func (a *App) GetRequests(params RequestQueryParams) (RequestListResult, error) {
 	a.mu.RLock()
-	defer a.mu.RUnlock()
+	usageTracker := a.usageTracker
+	cfg := a.config
+	a.mu.RUnlock()
 
-	if a.usageTracker == nil {
+	if usageTracker == nil {
 		return RequestListResult{}, nil
 	}
 
@@ -242,12 +256,13 @@ func (a *App) GetRequests(params RequestQueryParams) (RequestListResult, error) 
 
 	offset := (page - 1) * pageSize
 
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), usageDBQueryTimeout)
+	defer cancel()
 
 	// 解析时间参数（使用配置的时区）
 	loc := time.Local
-	if a.config != nil && a.config.Timezone != "" {
-		if l, err := time.LoadLocation(a.config.Timezone); err == nil {
+	if cfg != nil && cfg.Timezone != "" {
+		if l, err := time.LoadLocation(cfg.Timezone); err == nil {
 			loc = l
 		}
 	}
@@ -290,7 +305,7 @@ func (a *App) GetRequests(params RequestQueryParams) (RequestListResult, error) 
 		Offset:       offset,
 	}
 
-	requests, total, err := a.usageTracker.QueryRequestDetailsWithHotPool(ctx, opts)
+	requests, total, err := usageTracker.QueryRequestDetailsWithHotPool(ctx, opts)
 	if err != nil {
 		return RequestListResult{}, err
 	}
@@ -371,7 +386,9 @@ type UsageStatsQueryParams struct {
 // 支持完整筛选参数，与前端 buildQueryParams() 配合
 func (a *App) GetUsageStats(params UsageStatsQueryParams) (UsageStatsData, error) {
 	a.mu.RLock()
-	defer a.mu.RUnlock()
+	usageTracker := a.usageTracker
+	cfg := a.config
+	a.mu.RUnlock()
 
 	period := params.Period
 	if period == "" {
@@ -384,8 +401,8 @@ func (a *App) GetUsageStats(params UsageStatsQueryParams) (UsageStatsData, error
 
 	// 解析时间参数（使用配置的时区）
 	loc := time.Local
-	if a.config != nil && a.config.Timezone != "" {
-		if l, err := time.LoadLocation(a.config.Timezone); err == nil {
+	if cfg != nil && cfg.Timezone != "" {
+		if l, err := time.LoadLocation(cfg.Timezone); err == nil {
 			loc = l
 		}
 	}
@@ -428,12 +445,11 @@ func (a *App) GetUsageStats(params UsageStatsQueryParams) (UsageStatsData, error
 	}
 
 	// 如果有 usageTracker，从热池+数据库组合查询（与 HTTP API 一致）
-	if a.usageTracker != nil {
+	if usageTracker != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		// 使用 QueryOptions 查询请求详情（热池+数据库双源查询）
-		// 支持完整筛选参数
+		// 使用聚合查询：热池 + 数据库双源统计（避免拉取海量明细导致 UI 卡顿）
 		opts := &tracking.QueryOptions{
 			StartDate:    &startTime,
 			EndDate:      &endTime,
@@ -442,63 +458,25 @@ func (a *App) GetUsageStats(params UsageStatsQueryParams) (UsageStatsData, error
 			EndpointName: params.Endpoint,
 			GroupName:    params.Group,
 			Status:       params.Status,
-			Limit:        100000, // 大 limit 获取所有记录
+			Limit:        0,
 			Offset:       0,
 		}
 
-		requests, _, err := a.usageTracker.QueryRequestDetailsWithHotPool(ctx, opts)
-		if err == nil && len(requests) > 0 {
-			// 有数据，计算统计
-			var totalRequests, successRequests, errorRequests int
-			var totalTokens int64
-			var totalCost float64
-			var totalDuration int64
-			var durationCount int
+		totals, err := usageTracker.QueryUsageStatsTotalsWithHotPool(ctx, opts)
+		if err == nil && totals != nil {
+			result.TotalRequests = int(totals.TotalRequests)
+			result.FailedCount = int(totals.FailedRequests)
+			result.TotalTokens = totals.TotalTokens
+			result.TotalCostUSD = totals.TotalCostUSD
+			result.AvgDurationMs = totals.AvgDurationMs()
 
-			for _, req := range requests {
-				totalRequests++
-
-				// 统计成功/失败（与原版 HTTP API 逻辑一致）
-				switch req.Status {
-				case "completed", "processing":
-					successRequests++
-				case "failed", "error", "auth_error", "rate_limited", "server_error", "network_error", "stream_error", "timeout":
-					errorRequests++
-				}
-
-				// 累计 Token 和成本
-				totalTokens += req.InputTokens + req.OutputTokens + req.CacheCreationTokens + req.CacheReadTokens
-				totalCost += req.TotalCostUSD
-
-				// 计算耗时
-				if req.DurationMs != nil && *req.DurationMs > 0 {
-					totalDuration += *req.DurationMs
-					durationCount++
-				}
+			if totals.TotalRequests > 0 {
+				result.SuccessRate = float64(totals.SuccessRequests) / float64(totals.TotalRequests) * 100
 			}
-
-			// 计算平均耗时
-			avgDuration := 0.0
-			if durationCount > 0 {
-				avgDuration = float64(totalDuration) / float64(durationCount)
-			}
-
-			// 计算成功率
-			successRate := 0.0
-			if totalRequests > 0 {
-				successRate = float64(successRequests) / float64(totalRequests) * 100
-			}
-
-			result.TotalRequests = totalRequests
-			result.SuccessRate = successRate
-			result.AvgDurationMs = avgDuration
-			result.TotalCostUSD = totalCost
-			result.TotalTokens = totalTokens
-			result.FailedCount = errorRequests
 
 			return result, nil
 		}
-		// 查询失败或无数据，继续使用运行时统计
+		// 查询失败时，继续使用运行时统计（降级方案）
 	}
 
 	// 从运行时 Metrics 获取统计（降级方案，或无 usageTracker 时）
@@ -561,13 +539,14 @@ type TokenUsageData struct {
 // GetTokenUsage 获取当前 Token 使用统计（运行时内存数据）
 func (a *App) GetTokenUsage() TokenUsageData {
 	a.mu.RLock()
-	defer a.mu.RUnlock()
+	monitoringMiddleware := a.monitoringMiddleware
+	a.mu.RUnlock()
 
-	if a.monitoringMiddleware == nil {
+	if monitoringMiddleware == nil {
 		return TokenUsageData{}
 	}
 
-	metrics := a.monitoringMiddleware.GetMetrics()
+	metrics := monitoringMiddleware.GetMetrics()
 	if metrics == nil {
 		return TokenUsageData{}
 	}

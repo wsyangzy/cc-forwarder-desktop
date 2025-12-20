@@ -417,7 +417,7 @@ func (s *SQLiteEndpointStore) ListByChannel(ctx context.Context, channel string)
 			enabled, created_at, updated_at
 		FROM endpoints
 		WHERE channel = ?
-		ORDER BY priority ASC, name ASC
+		ORDER BY priority ASC, created_at DESC, name ASC
 	`
 
 	return s.scanEndpointsWithArgs(ctx, query, channel)
@@ -437,7 +437,7 @@ func (s *SQLiteEndpointStore) ListEnabled(ctx context.Context) ([]*EndpointRecor
 			enabled, created_at, updated_at
 		FROM endpoints
 		WHERE enabled = 1
-		ORDER BY priority ASC, channel ASC, name ASC
+		ORDER BY channel ASC, priority ASC, created_at DESC, name ASC
 	`
 
 	return s.scanEndpoints(ctx, query)
@@ -508,8 +508,8 @@ func (s *SQLiteEndpointStore) scanEndpoint(row *sql.Row) (*EndpointRecord, error
 	record.Enabled = enabled == 1
 
 	// 解析时间
-	record.CreatedAt, _ = time.Parse("2006-01-02 15:04:05.999999-07:00", createdAt)
-	record.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05.999999-07:00", updatedAt)
+	record.CreatedAt = parseSQLiteDateTime(createdAt)
+	record.UpdatedAt = parseSQLiteDateTime(updatedAt)
 
 	return &record, nil
 }
@@ -567,8 +567,8 @@ func (s *SQLiteEndpointStore) scanEndpointsWithArgs(ctx context.Context, query s
 		record.Enabled = enabled == 1
 
 		// 解析时间
-		record.CreatedAt, _ = time.Parse("2006-01-02 15:04:05.999999-07:00", createdAt)
-		record.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05.999999-07:00", updatedAt)
+		record.CreatedAt = parseSQLiteDateTime(createdAt)
+		record.UpdatedAt = parseSQLiteDateTime(updatedAt)
 
 		records = append(records, &record)
 	}

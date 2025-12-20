@@ -1,5 +1,5 @@
 // ============================================
-// ActiveGroupSwitcher - 端点快捷切换器
+// ActiveGroupSwitcher - 渠道快捷切换器
 // 2025-12-09 17:29:26 v5.0: 显示渠道名称，按优先级排序
 // ============================================
 
@@ -7,11 +7,11 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import { ArrowLeftRight, Server, Check, AlertCircle } from 'lucide-react';
 
 /**
- * ActiveGroupSwitcher - 端点快捷切换器
+ * ActiveGroupSwitcher - 渠道快捷切换器
  * @param {Object} props
- * @param {Array} props.groups - 所有端点列表（v4.0: 一个端点=一个组）
- * @param {string} props.activeGroup - 当前活跃端点名称
- * @param {Function} props.onSwitch - 切换回调 (endpointName) => Promise<void>
+ * @param {Array} props.groups - 所有渠道列表（一个渠道=一个组）
+ * @param {string} props.activeGroup - 当前活跃渠道名称
+ * @param {Function} props.onSwitch - 切换回调 (channelName) => Promise<void>
  * @param {boolean} props.loading - 是否正在切换中
  */
 const ActiveGroupSwitcher = ({
@@ -53,20 +53,20 @@ const ActiveGroupSwitcher = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isOpen]);
 
-  // 处理端点选择
-  const handleEndpointSelect = async (endpoint) => {
+  // 处理渠道选择
+  const handleChannelSelect = async (channel) => {
     if (switching) return;
 
-    // 如果选择的是当前活跃端点，直接关闭
-    if (endpoint.name === activeGroup) {
+    // 如果选择的是当前活跃渠道，直接关闭
+    if (channel.name === activeGroup) {
       setIsOpen(false);
       return;
     }
 
     setSwitching(true);
     try {
-      // 只传递端点名（组名）
-      await onSwitch?.(endpoint.name, null);
+      // 只传递渠道名（组名）
+      await onSwitch?.(channel.name, null);
       setIsOpen(false);
     } catch (error) {
       console.error('切换失败:', error);
@@ -101,14 +101,14 @@ const ActiveGroupSwitcher = ({
     return (
       <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm text-gray-400 bg-gray-50 border border-gray-200">
         <AlertCircle className="w-3.5 h-3.5" />
-        <span>无可用端点</span>
+        <span>无可用渠道</span>
       </div>
     );
   }
 
-  // 查找当前活跃端点
-  const activeEndpoint = sortedGroups.find(g => g.name === activeGroup) || sortedGroups[0];
-  const activeHealth = getHealthStyle(activeEndpoint);
+  // 查找当前活跃渠道
+  const activeChannel = sortedGroups.find(g => g.name === activeGroup) || sortedGroups[0];
+  const activeHealth = getHealthStyle(activeChannel);
 
   return (
     <div className="relative" ref={containerRef}>
@@ -130,7 +130,7 @@ const ActiveGroupSwitcher = ({
 
         <div className="flex items-center gap-1.5">
           <Server className="w-3.5 h-3.5 text-gray-400" />
-          <span className="font-semibold text-xs text-gray-500">端点:</span>
+          <span className="font-semibold text-xs text-gray-500">渠道:</span>
           <span className="font-bold">{activeGroup || '未选择'}</span>
         </div>
 
@@ -143,23 +143,23 @@ const ActiveGroupSwitcher = ({
           {/* 标题 */}
           <div className="px-4 py-3 bg-gray-50 border-b border-gray-100">
             <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
-              选择端点
+              选择渠道
             </div>
             <div className="text-[10px] text-gray-400 mt-0.5">
-              共 {sortedGroups.length} 个端点
+              共 {sortedGroups.length} 个渠道
             </div>
           </div>
 
-          {/* 端点列表 */}
+          {/* 渠道列表 */}
           <div className="p-2 max-h-[320px] overflow-y-auto">
-            {sortedGroups.map((endpoint) => {
-              const isActive = endpoint.name === activeGroup;
-              const health = getHealthStyle(endpoint);
+            {sortedGroups.map((channel) => {
+              const isActive = channel.name === activeGroup;
+              const health = getHealthStyle(channel);
 
               return (
                 <button
-                  key={endpoint.name}
-                  onClick={() => handleEndpointSelect(endpoint)}
+                  key={channel.name}
+                  onClick={() => handleChannelSelect(channel)}
                   disabled={switching}
                   className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-sm text-left transition-colors ${
                     isActive
@@ -172,28 +172,23 @@ const ActiveGroupSwitcher = ({
                     <span className={`w-2 h-2 rounded-full ${health.dot}`} />
 
                     <div className="flex flex-col">
-                      {/* 端点名称 + 渠道 */}
+                      {/* 渠道名称 */}
                       <div className="flex items-center gap-2">
                         <span className={`font-medium ${isActive ? 'text-indigo-700' : 'text-gray-800'}`}>
-                          {endpoint.name}
+                          {channel.name}
                         </span>
-                        {endpoint.channel && (
-                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-500">
-                            {endpoint.channel}
-                          </span>
-                        )}
                       </div>
                       {/* 健康状态 */}
                       <span className={`text-[10px] ${health.color}`}>
                         {health.text}
-                        {endpoint.in_cooldown && ' · 冷却中'}
+                        {channel.in_cooldown && ' · 冷却中'}
                       </span>
                     </div>
                   </div>
 
                   {/* 选中状态 */}
                   <div className="flex items-center gap-2">
-                    {endpoint.paused && (
+                    {channel.paused && (
                       <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-600">
                         已暂停
                       </span>

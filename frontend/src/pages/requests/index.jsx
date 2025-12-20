@@ -26,8 +26,8 @@ const RequestsPage = () => {
   const [stats, setStats] = useState(null);
   const [models, setModels] = useState([]);
   const [endpoints, setEndpoints] = useState([]);
-  const [groups, setGroups] = useState([]); // v4.0: 端点列表（一个端点=一个组）
-  const [activeGroup, setActiveGroup] = useState('');
+  const [groups, setGroups] = useState([]); // v6.0: 渠道列表（一个渠道=一个组）
+  const [activeGroup, setActiveGroup] = useState(''); // v6.0: 当前活跃渠道名称（沿用字段名兼容历史）
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -127,11 +127,11 @@ const RequestsPage = () => {
       const endpointsList = endpointsData.endpoints || endpointsData || [];
       setEndpoints(Array.isArray(endpointsList) ? endpointsList : []);
 
-      // v4.0: 端点列表（一个端点=一个组）
+      // v6.0: 渠道列表（一个渠道=一个组）
       const groupsList = groupsData?.groups || [];
       setGroups(Array.isArray(groupsList) ? groupsList : []);
 
-      // 从组数据中找到活跃端点
+      // 从组数据中找到活跃渠道
       const activeGroupObj = groupsList.find(g => g.is_active);
       if (activeGroupObj) {
         setActiveGroup(activeGroupObj.name);
@@ -212,14 +212,14 @@ const RequestsPage = () => {
     setSelectedRequest(null);
   };
 
-  // 端点切换回调
-  const handleGroupSwitch = async (endpointName) => {
+  // 渠道切换回调
+  const handleGroupSwitch = async (channelName) => {
     try {
-      // 只有端点变化时才调用 API 激活
-      if (endpointName !== activeGroup) {
-        console.log('🔄 切换端点:', endpointName);
-        await activateGroup(endpointName);
-        setActiveGroup(endpointName);
+      // 只有渠道变化时才调用 API 激活
+      if (channelName !== activeGroup) {
+        console.log('🔄 切换渠道:', channelName);
+        await activateGroup(channelName);
+        setActiveGroup(channelName);
       }
 
       // 切换后刷新数据

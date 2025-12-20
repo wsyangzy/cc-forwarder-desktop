@@ -16,6 +16,10 @@ func TestForceActivation(t *testing.T) {
 			Cooldown:                time.Minute,
 			AutoSwitchBetweenGroups: false,
 		},
+		Failover: config.FailoverConfig{
+			Enabled:         false,
+			DefaultCooldown: time.Minute,
+		},
 	}
 
 	// Create group manager

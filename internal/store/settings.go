@@ -105,8 +105,8 @@ func (s *SQLiteSettingsStore) Get(ctx context.Context, category, key string) (*S
 	}
 
 	record.RequiresRestart = requiresRestart == 1
-	record.CreatedAt, _ = time.Parse("2006-01-02 15:04:05.999999-07:00", createdAt)
-	record.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05.999999-07:00", updatedAt)
+	record.CreatedAt = parseSQLiteDateTime(createdAt)
+	record.UpdatedAt = parseSQLiteDateTime(updatedAt)
 
 	return &record, nil
 }
@@ -442,8 +442,8 @@ func (s *SQLiteSettingsStore) scanSettings(ctx context.Context, query string, ar
 		}
 
 		record.RequiresRestart = requiresRestart == 1
-		record.CreatedAt, _ = time.Parse("2006-01-02 15:04:05.999999-07:00", createdAt)
-		record.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05.999999-07:00", updatedAt)
+		record.CreatedAt = parseSQLiteDateTime(createdAt)
+		record.UpdatedAt = parseSQLiteDateTime(updatedAt)
 
 		records = append(records, &record)
 	}

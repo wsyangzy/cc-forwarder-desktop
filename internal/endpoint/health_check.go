@@ -106,8 +106,8 @@ func (m *Manager) performHealthChecks() {
 
 		slog.Debug(fmt.Sprintf("🩺 [健康检查] SQLite 模式：检查所有 %d 个端点（包括未激活）",
 			len(endpointsToCheck)))
-	} else if m.config.Group.AutoSwitchBetweenGroups {
-		// v4.0 Auto mode: only check active group endpoints
+	} else if m.config.Failover.Enabled {
+		// v6.0 Auto mode: only check active channel endpoints
 		endpointsToCheck = m.groupManager.FilterEndpointsByActiveGroups(snapshot)
 
 		if len(endpointsToCheck) == 0 {
@@ -151,7 +151,7 @@ func (m *Manager) performHealthChecks() {
 		}
 	}
 
-	if m.config.Group.AutoSwitchBetweenGroups {
+	if m.config.Failover.Enabled {
 		slog.Debug(fmt.Sprintf("🩺 [健康检查] 完成检查 - 活跃组健康: %d/%d", healthyCount, len(endpointsToCheck)))
 	} else {
 		slog.Debug(fmt.Sprintf("🩺 [健康检查] 完成检查 - 总体健康: %d/%d", healthyCount, len(endpointsToCheck)))

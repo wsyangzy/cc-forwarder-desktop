@@ -25,6 +25,10 @@ func createTestSuspensionManager(cfg *config.Config) *SuspensionManager {
 				AutoSwitchBetweenGroups: false,
 				Cooldown:                600 * time.Second,
 			},
+			Failover: config.FailoverConfig{
+				Enabled:         false,
+				DefaultCooldown: 600 * time.Second,
+			},
 		}
 	}
 
@@ -117,6 +121,9 @@ func TestSuspensionManager_ShouldSuspend_FeatureDisabled(t *testing.T) {
 		Group: config.GroupConfig{
 			AutoSwitchBetweenGroups: false, // 手动模式
 		},
+		Failover: config.FailoverConfig{
+			Enabled: false,
+		},
 	}
 
 	sm := createTestSuspensionManager(cfg)
@@ -136,6 +143,9 @@ func TestSuspensionManager_ShouldSuspend_AutoMode(t *testing.T) {
 		Group: config.GroupConfig{
 			AutoSwitchBetweenGroups: true, // 自动模式
 		},
+		Failover: config.FailoverConfig{
+			Enabled: true,
+		},
 	}
 
 	sm := createTestSuspensionManager(cfg)
@@ -154,6 +164,9 @@ func TestSuspensionManager_ShouldSuspend_MaxSuspendedRequestsReached(t *testing.
 		},
 		Group: config.GroupConfig{
 			AutoSwitchBetweenGroups: false, // 手动模式
+		},
+		Failover: config.FailoverConfig{
+			Enabled: false,
 		},
 	}
 
@@ -195,6 +208,9 @@ func TestSuspensionManager_WaitForGroupSwitch_Timeout(t *testing.T) {
 		},
 		Group: config.GroupConfig{
 			AutoSwitchBetweenGroups: false,
+		},
+		Failover: config.FailoverConfig{
+			Enabled: false,
 		},
 	}
 
@@ -337,6 +353,9 @@ func TestSuspensionManager_WaitForGroupSwitch_DefaultTimeout(t *testing.T) {
 		},
 		Group: config.GroupConfig{
 			AutoSwitchBetweenGroups: false,
+		},
+		Failover: config.FailoverConfig{
+			Enabled: false,
 		},
 	}
 
