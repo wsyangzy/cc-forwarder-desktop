@@ -44,6 +44,9 @@ func NewGroupManager(cfg *config.Config) *GroupManager {
 	if cfg.Failover.DefaultCooldown > 0 {
 		cooldownDuration = cfg.Failover.DefaultCooldown
 	}
+	if cooldownDuration == 0 {
+		cooldownDuration = 10 * time.Minute
+	}
 
 	return &GroupManager{
 		groups:               make(map[string]*GroupInfo),
@@ -66,6 +69,9 @@ func (gm *GroupManager) UpdateConfig(cfg *config.Config) {
 		gm.cooldownDuration = cfg.Failover.DefaultCooldown
 	} else {
 		gm.cooldownDuration = cfg.Group.Cooldown
+	}
+	if gm.cooldownDuration == 0 {
+		gm.cooldownDuration = 10 * time.Minute
 	}
 }
 
@@ -94,42 +100,54 @@ func (gm *GroupManager) UpdateGroups(endpoints []*Endpoint) {
 	}
 
 	// Rebuild groups from current endpoints
+	// v6.0: 以“渠道(channel)”作为路由与故障转移单位；未配置 channel 则回退为端点名（兼容旧逻辑）
 	newGroups := make(map[string]*GroupInfo)
 
 	for _, ep := range endpoints {
-		// v4.0: 自动为每个端点创建一个独立的组
-		// 使用端点名作为组名
-		groupName := ep.Config.Name
+		groupName := ChannelKey(ep)
 
-		// 检查是否参与故障转移（从配置中读取，默认为true）
-		failoverEnabled := true
-		if ep.Config.FailoverEnabled != nil {
-			failoverEnabled = *ep.Config.FailoverEnabled
+		group, exists := newGroups[groupName]
+		if !exists {
+			// Check if this group was in cooldown or had active state
+			var cooldownUntil time.Time
+			var wasActive bool
+			if oldGroup, existed := oldGroups[groupName]; existed {
+				cooldownUntil = oldGroup.CooldownUntil
+				wasActive = oldGroup.IsActive // v5.0: 恢复之前的激活状态
+			}
+
+			group = &GroupInfo{
+				Name:          groupName,
+				Endpoints:     make([]*Endpoint, 0, 2),
+				IsActive:      wasActive, // v5.0: SQLite 模式下保留之前的激活状态
+				CooldownUntil: cooldownUntil,
+				Priority:      ep.Config.Priority,
+			}
+			newGroups[groupName] = group
 		}
 
-		// Check if this group was in cooldown or had active state
-		var cooldownUntil time.Time
-		var wasActive bool
-		if oldGroup, existed := oldGroups[groupName]; existed {
-			cooldownUntil = oldGroup.CooldownUntil
-			wasActive = oldGroup.IsActive // v5.0: 恢复之前的激活状态
-		}
+		group.Endpoints = append(group.Endpoints, ep)
 
-		group := &GroupInfo{
-			Name:          groupName,
-			Endpoints:     []*Endpoint{ep},
-			IsActive:      wasActive, // v5.0: SQLite 模式下保留之前的激活状态
-			CooldownUntil: cooldownUntil,
-			Priority:      ep.Config.Priority,
+		// 组优先级：取组内最小 endpoint priority（越小越优先）
+		if ep.Config.Priority < group.Priority {
+			group.Priority = ep.Config.Priority
 		}
+	}
 
-		// v4.0: 由 failover_enabled 控制组是否处于活跃状态
-		// 如果 failover_enabled=false，则不参与故障转移（类似手动暂停）
-		if !failoverEnabled {
-			group.ManuallyPaused = true // 使用现有的手动暂停机制来实现不参与故障转移
+	// 组级暂停：当且仅当组内所有端点都 failover_enabled=false 时，暂停该组（渠道）
+	for _, group := range newGroups {
+		allDisabled := true
+		for _, ep := range group.Endpoints {
+			failoverEnabled := true
+			if ep.Config.FailoverEnabled != nil {
+				failoverEnabled = *ep.Config.FailoverEnabled
+			}
+			if failoverEnabled {
+				allDisabled = false
+				break
+			}
 		}
-
-		newGroups[groupName] = group
+		group.ManuallyPaused = allDisabled
 	}
 
 	gm.groups = newGroups
@@ -143,6 +161,8 @@ func (gm *GroupManager) updateActiveGroups() {
 	// v5.0: SQLite 模式下，禁用自动激活逻辑（由 enabled 字段控制）
 	// 但仍需处理冷却超时清理
 	isSQLiteMode := gm.config.EndpointsStorage.Type == "sqlite"
+	// v4.0: 使用 Failover.Enabled (优先) 或 Group.AutoSwitchBetweenGroups (兼容)
+	autoSwitchEnabled := gm.config.Failover.Enabled || gm.config.Group.AutoSwitchBetweenGroups
 
 	now := time.Now()
 	var newlyActivatedGroup string
@@ -158,8 +178,6 @@ func (gm *GroupManager) updateActiveGroups() {
 		if !group.CooldownUntil.IsZero() && now.After(group.CooldownUntil) {
 			// Cooldown expired, clear it but don't auto-activate in manual mode
 			group.CooldownUntil = time.Time{}
-			// v4.0: 使用 Failover.Enabled (优先) 或 Group.AutoSwitchBetweenGroups (兼容)
-			autoSwitchEnabled := gm.config.Failover.Enabled || gm.config.Group.AutoSwitchBetweenGroups
 			slog.Info(fmt.Sprintf("🔄 [组管理] 组冷却结束: %s (优先级: %d) - %s",
 				group.Name, group.Priority,
 				map[bool]string{true: "自动激活", false: "等待手动激活"}[autoSwitchEnabled]))
@@ -169,16 +187,13 @@ func (gm *GroupManager) updateActiveGroups() {
 		}
 	}
 
-	// v5.0: SQLite 模式下跳过自动激活逻辑（手动控制）
+	// v5.0: SQLite 模式下跳过自动激活逻辑（手动控制），仅处理冷却状态即可
 	if isSQLiteMode {
-		// SQLite 模式：保持手动设置的激活状态，不自动切换
 		return
 	}
 
 	// Determine which groups should be active based on priority
 	// Only auto-activate next group if auto switching is enabled
-	// v4.0: 使用 Failover.Enabled (优先) 或 Group.AutoSwitchBetweenGroups (兼容)
-	autoSwitchEnabled := gm.config.Failover.Enabled || gm.config.Group.AutoSwitchBetweenGroups
 	if autoSwitchEnabled {
 		// Auto mode: automatically activate highest priority available group
 		// Get all groups sorted by priority
@@ -754,11 +769,10 @@ func (gm *GroupManager) FilterEndpointsByActiveGroups(endpoints []*Endpoint) []*
 	}
 
 	// Filter endpoints
-	// v4.0: 组名 = 端点名
+	// v6.0: 组名 = 渠道(channel)，未配置 channel 则回退为端点名
 	var filtered []*Endpoint
 	for _, ep := range endpoints {
-		// v4.0 架构：组名就是端点名
-		groupName := ep.Config.Name
+		groupName := ChannelKey(ep)
 
 		if activeGroupNames[groupName] {
 			filtered = append(filtered, ep)

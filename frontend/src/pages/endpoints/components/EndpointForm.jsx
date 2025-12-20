@@ -90,6 +90,9 @@ const FormCheckbox = ({ label, name, checked, onChange, help }) => (
 
 const EndpointForm = ({
   endpoint = null,  // null = 新建模式, object = 编辑模式
+  channels = [],
+  defaultChannel = '',
+  lockChannel = false,
   onSave,
   onCancel,
   loading = false
@@ -119,7 +122,7 @@ const EndpointForm = ({
       };
     }
     return {
-      channel: '',
+      channel: defaultChannel || '',
       name: '',
       url: '',
       token: '',
@@ -234,15 +237,35 @@ const EndpointForm = ({
 
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <FormInput
-                  label="渠道"
-                  name="channel"
-                  value={formData.channel}
-                  onChange={handleChange}
-                  placeholder="e.g. official, backup"
-                  required
-                  help="用于分组展示端点"
-                />
+                <div className="space-y-1">
+                  <label className="block text-sm font-medium text-slate-700">
+                    渠道
+                    <span className="text-rose-500 ml-1">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    name="channel"
+                    value={formData.channel || ''}
+                    onChange={handleChange}
+                    placeholder="e.g. official, backup"
+                    list="cc-forwarder-channel-options"
+                    disabled={!isEditMode && lockChannel}
+                    className={`
+                      w-full px-3 py-2 border border-slate-200 rounded-lg text-sm
+                      focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500
+                      disabled:bg-slate-50 disabled:text-slate-400
+                      ${(!isEditMode && lockChannel) ? 'cursor-not-allowed' : ''}
+                    `}
+                  />
+                  <datalist id="cc-forwarder-channel-options">
+                    {channels.filter(Boolean).map((c) => (
+                      <option key={c} value={c} />
+                    ))}
+                  </datalist>
+                  <p className="text-xs text-slate-400">
+                    用于分块展示端点，并作为故障转移的第一层边界
+                  </p>
+                </div>
                 {errors.channel && (
                   <p className="text-xs text-rose-500 mt-1">{errors.channel}</p>
                 )}

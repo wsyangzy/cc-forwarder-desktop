@@ -49,6 +49,9 @@ func (a *App) GetGroups() []GroupInfo {
 		if len(g.Endpoints) > 0 {
 			channel = g.Endpoints[0].Config.Channel
 		}
+		if channel == "" {
+			channel = g.Name
+		}
 
 		info := GroupInfo{
 			Name:          g.Name,
@@ -72,8 +75,8 @@ func (a *App) GetGroups() []GroupInfo {
 	return result
 }
 
-// ActivateGroup 激活指定组（端点）
-// v5.0: 同时更新数据库中的 enabled 状态
+// ActivateGroup 激活指定组
+// v6.0: 组名 = 渠道(channel)（SQLite 模式）；未配置 channel 时回退为端点名（YAML 模式兼容）
 func (a *App) ActivateGroup(name string) error {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
@@ -82,27 +85,21 @@ func (a *App) ActivateGroup(name string) error {
 		return fmt.Errorf("端点管理器未初始化")
 	}
 
-	// v5.0: 如果有 endpointService，同步到数据库
+	// v5.0+: 如果有 endpointService，同步到数据库
 	if a.endpointService != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
-		// 1. 先禁用所有端点
-		if err := a.endpointService.DisableAllEndpoints(ctx); err != nil {
-			a.logger.Warn("禁用所有端点失败", "error", err)
-			// 继续执行，不阻断流程
-		}
-
-		// 2. 启用选中的端点
-		if err := a.endpointService.ToggleEndpoint(ctx, name, true); err != nil {
-			a.logger.Warn("启用端点失败", "endpoint", name, "error", err)
-			// 继续执行内存激活
+		// SQLite：激活渠道（互斥）
+		if err := a.endpointService.ActivateChannel(ctx, name); err != nil {
+			a.logger.Warn("激活渠道失败", "channel", name, "error", err)
 		} else {
-			a.logger.Info("✅ 端点已同步到数据库", "endpoint", name, "enabled", true)
+			a.logger.Info("✅ 渠道已同步到数据库", "channel", name, "enabled", true)
+			return nil
 		}
 	}
 
-	// 3. 内存中激活组
+	// 内存中激活组（兼容 YAML 模式）
 	return a.endpointManager.ManualActivateGroup(name)
 }
 

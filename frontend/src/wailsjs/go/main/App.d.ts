@@ -91,6 +91,8 @@ export function ResumeGroup(arg1:string):Promise<void>;
 
 export function SetDefaultModelPricing(arg1:string):Promise<void>;
 
+export function SetEndpointFailoverEnabled(arg1:string,arg2:boolean):Promise<void>;
+
 export function SetEndpointPriority(arg1:string,arg2:number):Promise<void>;
 
 export function StartLogStream():Promise<void>;

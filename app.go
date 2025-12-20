@@ -118,21 +118,18 @@ func (a *App) startup(ctx context.Context) {
 		a.emitEndpointUpdate()
 	})
 
-	// v5.x+ 设置故障转移回调，同步数据库状态
-	a.endpointManager.SetOnFailoverTriggered(func(failedEndpoint, newEndpoint string) {
-		// 同步数据库: 禁用失败的端点，启用新端点
+	// v6.0+ 设置故障转移回调：以“渠道(channel)”为单位同步数据库状态
+	a.endpointManager.SetOnFailoverTriggered(func(failedChannel, newChannel string) {
 		if a.endpointService != nil {
 			ctx := context.Background()
-			// 禁用失败的端点
-			if err := a.endpointService.ToggleEndpoint(ctx, failedEndpoint, false); err != nil {
-				slog.Warn(fmt.Sprintf("⚠️ [故障转移回调] 禁用端点失败: %s - %v", failedEndpoint, err))
+			if newChannel != "" {
+				if err := a.endpointService.ActivateChannel(ctx, newChannel); err != nil {
+					slog.Warn(fmt.Sprintf("⚠️ [故障转移回调] 激活新渠道失败: %s - %v", newChannel, err))
+				}
 			}
-			// 启用新端点
-			if err := a.endpointService.ToggleEndpoint(ctx, newEndpoint, true); err != nil {
-				slog.Warn(fmt.Sprintf("⚠️ [故障转移回调] 启用端点失败: %s - %v", newEndpoint, err))
-			}
-			slog.Info(fmt.Sprintf("✅ [故障转移回调] 数据库已同步: %s → %s", failedEndpoint, newEndpoint))
+			slog.Info(fmt.Sprintf("✅ [故障转移回调] 渠道已切换并同步数据库: %s → %s", failedChannel, newChannel))
 		}
+
 		// 推送事件到前端
 		a.emitEndpointUpdate()
 	})

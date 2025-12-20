@@ -377,6 +377,62 @@ func (a *App) UpdateEndpointRecord(name string, input CreateEndpointInput) error
 	return nil
 }
 
+// SetEndpointFailoverEnabled 设置端点是否参与故障转移（快捷开关）
+// 仅影响当前端点所在渠道内的候选端点集合。
+func (a *App) SetEndpointFailoverEnabled(name string, enabled bool) error {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	if a.endpointService == nil {
+		return fmt.Errorf("端点存储服务未启用")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	record, err := a.endpointService.GetEndpoint(ctx, name)
+	if err != nil {
+		return fmt.Errorf("获取端点失败: %w", err)
+	}
+	if record == nil {
+		return fmt.Errorf("端点 '%s' 不存在", name)
+	}
+
+	record.FailoverEnabled = enabled
+	if err := a.endpointService.UpdateEndpoint(ctx, record); err != nil {
+		return fmt.Errorf("更新端点失败: %w", err)
+	}
+
+	if a.logger != nil {
+		a.logger.Info("✅ 端点故障转移参与状态已更新", "name", name, "enabled", enabled)
+	}
+
+	// 同步更新内存中的端点配置（确保路由候选立即生效）
+	if a.endpointManager != nil {
+		failoverEnabled := enabled
+		endpointCfg := config.EndpointConfig{
+			Name:                name,
+			URL:                 record.URL,
+			Channel:             record.Channel,
+			Priority:            record.Priority,
+			FailoverEnabled:     &failoverEnabled,
+			Token:               record.Token,
+			ApiKey:              record.ApiKey,
+			Timeout:             time.Duration(record.TimeoutSeconds) * time.Second,
+			Headers:             record.Headers,
+			SupportsCountTokens: record.SupportsCountTokens,
+		}
+
+		if err := a.endpointManager.UpdateEndpointConfig(name, endpointCfg); err != nil {
+			if a.logger != nil {
+				a.logger.Warn("⚠️ 同步端点配置到内存失败", "name", name, "error", err)
+			}
+		}
+	}
+
+	return nil
+}
+
 // DeleteEndpointRecord 删除端点
 func (a *App) DeleteEndpointRecord(name string) error {
 	a.mu.RLock()
@@ -404,7 +460,7 @@ func (a *App) DeleteEndpointRecord(name string) error {
 }
 
 // ToggleEndpointRecord 切换端点启用状态
-// v5.0: enabled=true 时激活组，enabled=false 时不操作（组管理器会自动处理）
+// v6.0: 切换语义升级为“激活/停用渠道(channel)”
 func (a *App) ToggleEndpointRecord(name string, enabled bool) error {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
@@ -416,67 +472,33 @@ func (a *App) ToggleEndpointRecord(name string, enabled bool) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// v5.0: 激活端点时实现互斥
 	if enabled {
-		// 1. 数据库层互斥：先停用所有端点
-		if err := a.endpointService.DisableAllEndpoints(ctx); err != nil {
-			return fmt.Errorf("停用其他端点失败: %w", err)
+		// 激活：以端点所属渠道为单位
+		record, err := a.endpointService.GetEndpoint(ctx, name)
+		if err != nil {
+			return fmt.Errorf("获取端点配置失败: %w", err)
 		}
-
-		// 2. 激活目标端点（数据库）
-		if err := a.endpointService.ToggleEndpoint(ctx, name, true); err != nil {
-			return fmt.Errorf("激活端点失败: %w", err)
+		if record == nil {
+			return fmt.Errorf("端点 '%s' 不存在", name)
 		}
-
-		// 3. 确保端点在内存中存在（处理新建端点的情况）
-		if a.endpointManager != nil {
-			// 从数据库获取完整的端点配置
-			record, err := a.endpointService.GetEndpoint(ctx, name)
-			if err != nil {
-				return fmt.Errorf("获取端点配置失败: %w", err)
-			}
-
-			// 构建 config.EndpointConfig
-			failoverEnabled := record.FailoverEnabled
-			endpointCfg := config.EndpointConfig{
-				Name:                record.Name,
-				URL:                 record.URL,
-				Channel:             record.Channel,
-				Priority:            record.Priority,
-				FailoverEnabled:     &failoverEnabled,
-				Token:               record.Token,
-				ApiKey:              record.ApiKey,
-				Timeout:             time.Duration(record.TimeoutSeconds) * time.Second,
-				Headers:             record.Headers,
-				SupportsCountTokens: record.SupportsCountTokens,
-			}
-
-			// 尝试添加端点（如果已存在会更新配置）
-			if err := a.endpointManager.AddEndpoint(endpointCfg); err != nil {
-				// 端点已存在，尝试更新配置
-				if updateErr := a.endpointManager.UpdateEndpointConfig(name, endpointCfg); updateErr != nil {
-					a.logger.Warn("⚠️ 更新端点配置失败", "name", name, "error", updateErr)
-				}
-			} else {
-				a.logger.Info("✅ 新端点已添加到内存", "name", name)
-			}
-
-			// 4. 激活对应的组
-			if err := a.endpointManager.ManualActivateGroup(name); err != nil {
-				return fmt.Errorf("激活组失败: %w", err)
-			}
+		if err := a.endpointService.ActivateChannel(ctx, record.Channel); err != nil {
+			return fmt.Errorf("激活渠道失败: %w", err)
 		}
 	} else {
-		// 停用端点：只更新数据库
-		if err := a.endpointService.ToggleEndpoint(ctx, name, false); err != nil {
-			return fmt.Errorf("切换端点状态失败: %w", err)
+		// 停用：以端点所属渠道为单位
+		record, err := a.endpointService.GetEndpoint(ctx, name)
+		if err != nil {
+			return fmt.Errorf("获取端点配置失败: %w", err)
+		}
+		if record == nil {
+			return fmt.Errorf("端点 '%s' 不存在", name)
+		}
+		if err := a.endpointService.DeactivateChannel(ctx, record.Channel); err != nil {
+			return fmt.Errorf("停用渠道失败: %w", err)
 		}
 	}
 
-	status := "启用"
-	if !enabled {
-		status = "禁用"
-	}
+	status := map[bool]string{true: "启用", false: "禁用"}[enabled]
 
 	if a.logger != nil {
 		a.logger.Info("✅ 端点状态已切换", "name", name, "status", status)

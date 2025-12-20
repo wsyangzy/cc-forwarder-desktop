@@ -169,6 +169,87 @@ func (s *EndpointService) ToggleEndpoint(ctx context.Context, name string, enabl
 	return s.UpdateEndpoint(ctx, record)
 }
 
+// ActivateChannel 激活指定渠道（SQLite 模式）
+// 语义：同一时间仅允许一个渠道处于激活状态；激活渠道会启用该渠道下所有端点。
+func (s *EndpointService) ActivateChannel(ctx context.Context, channel string) error {
+	if channel == "" {
+		return fmt.Errorf("渠道不能为空")
+	}
+
+	// 互斥：先停用所有端点
+	if err := s.DisableAllEndpoints(ctx); err != nil {
+		return err
+	}
+
+	records, err := s.store.ListByChannel(ctx, channel)
+	if err != nil {
+		return fmt.Errorf("获取渠道端点列表失败: %w", err)
+	}
+	if len(records) == 0 {
+		return fmt.Errorf("渠道 '%s' 下没有端点", channel)
+	}
+
+	for _, record := range records {
+		record.Enabled = true
+		if err := s.store.Update(ctx, record); err != nil {
+			return fmt.Errorf("启用端点失败: %s - %w", record.Name, err)
+		}
+
+		// 同步运行时配置
+		cfg := s.recordToConfig(record)
+		if err := s.manager.UpdateEndpointConfig(record.Name, cfg); err != nil {
+			slog.Warn(fmt.Sprintf("⚠️ [EndpointService] 更新运行时管理器失败: %s - %v", record.Name, err))
+		}
+	}
+
+	// 激活运行时渠道（组）
+	if err := s.manager.ManualActivateGroup(channel); err != nil {
+		return fmt.Errorf("激活渠道失败: %w", err)
+	}
+
+	slog.Info(fmt.Sprintf("✅ [EndpointService] 已激活渠道: %s (端点数: %d)", channel, len(records)))
+	return nil
+}
+
+// DeactivateChannel 停用指定渠道（SQLite 模式）
+// 注意：这会禁用该渠道下所有端点。
+func (s *EndpointService) DeactivateChannel(ctx context.Context, channel string) error {
+	if channel == "" {
+		return fmt.Errorf("渠道不能为空")
+	}
+
+	records, err := s.store.ListByChannel(ctx, channel)
+	if err != nil {
+		return fmt.Errorf("获取渠道端点列表失败: %w", err)
+	}
+	if len(records) == 0 {
+		return nil
+	}
+
+	for _, record := range records {
+		if !record.Enabled {
+			continue
+		}
+		record.Enabled = false
+		if err := s.store.Update(ctx, record); err != nil {
+			return fmt.Errorf("禁用端点失败: %s - %w", record.Name, err)
+		}
+
+		// 同步运行时配置
+		cfg := s.recordToConfig(record)
+		if err := s.manager.UpdateEndpointConfig(record.Name, cfg); err != nil {
+			slog.Warn(fmt.Sprintf("⚠️ [EndpointService] 更新运行时管理器失败: %s - %v", record.Name, err))
+		}
+	}
+
+	if gm := s.manager.GetGroupManager(); gm != nil {
+		_ = gm.DeactivateGroup(channel)
+	}
+
+	slog.Info(fmt.Sprintf("✅ [EndpointService] 已停用渠道: %s", channel))
+	return nil
+}
+
 // DisableAllEndpoints 禁用所有端点
 // v5.0: 用于实现互斥激活（激活一个端点前先禁用所有）
 func (s *EndpointService) DisableAllEndpoints(ctx context.Context) error {
@@ -247,24 +328,52 @@ func (s *EndpointService) SyncFromDatabase(ctx context.Context) error {
 
 	// 转换为配置数组
 	endpoints := make([]config.EndpointConfig, len(records))
-	var enabledEndpointName string
+	enabledChannelCount := make(map[string]int)
 	for i, record := range records {
 		endpoints[i] = s.recordToConfig(record)
-		// 记录 enabled=true 的端点
-		if record.Enabled {
-			enabledEndpointName = record.Name
+		// 统计 enabled=true 的渠道分布
+		if record.Enabled && record.Channel != "" {
+			enabledChannelCount[record.Channel]++
 		}
 	}
 
 	// 使用专门的同步方法（不走 UpdateConfig）
 	s.manager.SyncEndpoints(endpoints)
 
-	// 同步 enabled=true 的端点到组激活状态
-	if enabledEndpointName != "" {
-		if err := s.manager.ManualActivateGroup(enabledEndpointName); err != nil {
-			slog.Warn(fmt.Sprintf("⚠️ [EndpointService] 激活组失败: %s - %v", enabledEndpointName, err))
+	// 同步 enabled=true 的渠道到组激活状态（v6.0: 以渠道为路由单位）
+	if len(enabledChannelCount) > 0 {
+		// 选择 enabled 端点数最多的渠道；若并列则按字典序稳定选择
+		var selectedChannel string
+		var maxCount int
+		for ch, cnt := range enabledChannelCount {
+			if cnt > maxCount || (cnt == maxCount && (selectedChannel == "" || ch < selectedChannel)) {
+				selectedChannel = ch
+				maxCount = cnt
+			}
+		}
+
+		// 若存在多个 enabled 渠道，修正为互斥激活（避免 UI/路由语义混乱）
+		if len(enabledChannelCount) > 1 {
+			slog.Warn(fmt.Sprintf("⚠️ [EndpointService] 检测到多个 enabled 渠道，自动修正为只保留: %s", selectedChannel))
+			for _, record := range records {
+				if record.Enabled && record.Channel != selectedChannel {
+					record.Enabled = false
+					if err := s.store.Update(ctx, record); err != nil {
+						slog.Warn(fmt.Sprintf("⚠️ [EndpointService] 修正禁用端点失败: %s - %v", record.Name, err))
+						continue
+					}
+					cfg := s.recordToConfig(record)
+					if err := s.manager.UpdateEndpointConfig(record.Name, cfg); err != nil {
+						slog.Warn(fmt.Sprintf("⚠️ [EndpointService] 更新运行时管理器失败: %s - %v", record.Name, err))
+					}
+				}
+			}
+		}
+
+		if err := s.manager.ManualActivateGroup(selectedChannel); err != nil {
+			slog.Warn(fmt.Sprintf("⚠️ [EndpointService] 激活渠道失败: %s - %v", selectedChannel, err))
 		} else {
-			slog.Info(fmt.Sprintf("✅ [EndpointService] 已激活端点: %s", enabledEndpointName))
+			slog.Info(fmt.Sprintf("✅ [EndpointService] 已激活渠道: %s", selectedChannel))
 		}
 	}
 
@@ -354,7 +463,7 @@ func (s *EndpointService) recordToConfig(record *store.EndpointRecord) config.En
 // configToRecord 将配置对象转换为数据库记录
 func (s *EndpointService) configToRecord(cfg config.EndpointConfig) *store.EndpointRecord {
 	record := &store.EndpointRecord{
-		Channel:             cfg.Name, // 默认使用名称作为渠道
+		Channel:             cfg.Channel,
 		Name:                cfg.Name,
 		URL:                 cfg.URL,
 		Token:               cfg.Token,
@@ -366,6 +475,11 @@ func (s *EndpointService) configToRecord(cfg config.EndpointConfig) *store.Endpo
 		SupportsCountTokens: cfg.SupportsCountTokens,
 		CostMultiplier:      1.0,
 		Enabled:             true,
+	}
+
+	if record.Channel == "" {
+		// 兼容：未配置 channel 时回退为端点名
+		record.Channel = cfg.Name
 	}
 
 	if cfg.FailoverEnabled != nil {

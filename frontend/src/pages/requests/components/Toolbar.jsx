@@ -24,9 +24,9 @@ import ActiveGroupSwitcher from './ActiveGroupSwitcher.jsx';
  * @param {Function} props.onToggleColumn - 切换列显示回调
  * @param {Function} props.onResetColumns - 重置列配置回调
  * @param {Object} props.autoRefresh - 自动刷新状态和控制
- * @param {Array} props.groups - 所有端点列表（v4.0: 一个端点=一个组）
- * @param {string} props.activeGroup - 当前活跃端点名称
- * @param {Function} props.onGroupSwitch - 端点切换回调 (endpointName) => void
+ * @param {Array} props.groups - 所有渠道列表（一个渠道=一个组）
+ * @param {string} props.activeGroup - 当前活跃渠道名称
+ * @param {Function} props.onGroupSwitch - 渠道切换回调 (channelName) => void
  */
 const Toolbar = ({
   activeTimeRange = 'today',

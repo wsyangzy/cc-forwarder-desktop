@@ -42,29 +42,35 @@ func (a *App) GetEndpoints() []EndpointInfo {
 
 	// 预先构建组状态映射
 	groupActiveMap := make(map[string]bool)
+	groupPriorityMap := make(map[string]int)
 	if gm != nil {
 		for _, g := range gm.GetAllGroups() {
 			groupActiveMap[g.Name] = g.IsActive
+			groupPriorityMap[g.Name] = g.Priority
 		}
 	}
 
 	for _, ep := range endpoints {
+		// v6.0: 路由组 = 渠道(channel)，未配置 channel 则回退为端点名（兼容旧逻辑）
+		routeGroup := ep.Config.Channel
+		if routeGroup == "" {
+			routeGroup = ep.Config.Name
+		}
+
 		info := EndpointInfo{
 			Name:            ep.Config.Name,
 			URL:             ep.Config.URL,
 			Channel:         ep.Config.Channel, // v5.0: 渠道标签
-			Group:           ep.Config.Group,
+			Group:           routeGroup,
 			Priority:        ep.Config.Priority,
-			GroupPriority:   ep.Config.GroupPriority,
 			Healthy:         ep.Status.Healthy,
 			ConsecutiveFail: ep.Status.ConsecutiveFails,
 			ResponseTimeMs:  float64(ep.Status.ResponseTime.Milliseconds()),
 		}
 
 		// 获取组是否激活
-		if ep.Config.Group != "" {
-			info.GroupIsActive = groupActiveMap[ep.Config.Group]
-		}
+		info.GroupIsActive = groupActiveMap[routeGroup]
+		info.GroupPriority = groupPriorityMap[routeGroup]
 
 		if !ep.Status.LastCheck.IsZero() {
 			info.LastCheck = ep.Status.LastCheck.Format(time.RFC3339)

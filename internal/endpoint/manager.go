@@ -57,8 +57,8 @@ type Manager struct {
 	// 健康检查完成回调（用于推送 Wails 事件）
 	onHealthCheckComplete func()
 	// 故障转移回调（用于同步数据库）
-	// 参数: failedEndpoint 失败的端点名, newEndpoint 新激活的端点名
-	onFailoverTriggered func(failedEndpoint, newEndpoint string)
+	// 参数: failedChannel 失败的渠道名, newChannel 新激活的渠道名
+	onFailoverTriggered func(failedChannel, newChannel string)
 }
 
 // NewManager creates a new endpoint manager

@@ -437,7 +437,7 @@ func TestStatusUpdatePathUnification(t *testing.T) {
 	for i, manager := range managers {
 		t.Run(fmt.Sprintf("manager_%d", i+1), func(t *testing.T) {
 			// 设置端点信息
-			manager.SetEndpoint(fmt.Sprintf("test-endpoint-%d", i+1), "test-group")
+			manager.SetEndpoint(fmt.Sprintf("test-endpoint-%d", i+1), "test-group", "")
 
 			// 按顺序更新状态，验证状态转换
 			for j, status := range testStatuses {
@@ -468,8 +468,8 @@ func TestStreamingAndRegularRequestConsistency(t *testing.T) {
 	commonGroup := "test-group"
 
 	// 设置端点信息
-	streamingManager.SetEndpoint(commonEndpoint, commonGroup)
-	regularManager.SetEndpoint(commonEndpoint, commonGroup)
+	streamingManager.SetEndpoint(commonEndpoint, commonGroup, "")
+	regularManager.SetEndpoint(commonEndpoint, commonGroup, "")
 
 	// 模拟相同的状态转换序列
 	statusSequence := []struct {
@@ -572,7 +572,7 @@ func TestIntegrationErrorRecoveryFlow(t *testing.T) {
 	endpointName := "test-endpoint"
 	groupName := "test-group"
 
-	lifecycleManager.SetEndpoint(endpointName, groupName)
+	lifecycleManager.SetEndpoint(endpointName, groupName, "")
 
 	// 第一次尝试 - 网络错误
 	networkErr := fmt.Errorf("connection refused")

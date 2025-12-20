@@ -178,6 +178,10 @@ export function SetDefaultModelPricing(arg1) {
   return window['go']['main']['App']['SetDefaultModelPricing'](arg1);
 }
 
+export function SetEndpointFailoverEnabled(arg1, arg2) {
+  return window['go']['main']['App']['SetEndpointFailoverEnabled'](arg1, arg2);
+}
+
 export function SetEndpointPriority(arg1, arg2) {
   return window['go']['main']['App']['SetEndpointPriority'](arg1, arg2);
 }
