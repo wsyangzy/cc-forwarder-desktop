@@ -79,18 +79,25 @@ export const useFilters = (initialFilters = {}) => {
   const buildQueryParams = useCallback(() => {
     const queryParams = {};
 
-    // 处理时间筛选 - 添加时区信息
+    // 处理时间筛选
+    // 后端 parseTimeWithLocation 支持不带时区的时间字符串，并会使用后端配置的时区进行解析。
+    const ensureSeconds = (value) => {
+      if (!value) return '';
+      // datetime-local 通常为 YYYY-MM-DDTHH:mm
+      // 若包含秒则直接返回
+      const lastColon = value.lastIndexOf(':');
+      if (lastColon > 0 && value.length - lastColon - 1 === 2 && value.includes('T')) {
+        // 形如 ...:mm，补齐秒
+        if (value.length === 16) return value + ':00';
+      }
+      return value;
+    };
+
     if (filters.startDate) {
-      const timeStr = filters.startDate.includes(':')
-        ? filters.startDate + ':00'
-        : filters.startDate + ':00:00';
-      queryParams.start_date = timeStr + '+08:00';
+      queryParams.start_date = ensureSeconds(filters.startDate);
     }
     if (filters.endDate) {
-      const timeStr = filters.endDate.includes(':')
-        ? filters.endDate + ':00'
-        : filters.endDate + ':00:00';
-      queryParams.end_date = timeStr + '+08:00';
+      queryParams.end_date = ensureSeconds(filters.endDate);
     }
 
     // 处理状态筛选 - 'all' 表示不筛选

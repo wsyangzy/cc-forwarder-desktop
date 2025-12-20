@@ -268,6 +268,11 @@ func (s *SQLiteAdapter) migrateSchema(ctx context.Context) error {
 			alterSQL:    "ALTER TABLE channels ADD COLUMN website TEXT",
 			description: "渠道官网字段",
 		},
+		{
+			checkColumn: "priority",
+			alterSQL:    "ALTER TABLE channels ADD COLUMN priority INTEGER DEFAULT 1",
+			description: "渠道优先级字段",
+		},
 	}
 
 	runMigrations := func(table string, migrations []struct {

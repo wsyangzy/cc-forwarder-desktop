@@ -94,6 +94,17 @@ func (e *EventEmitter) Emit(entry LogEntry) {
 	select {
 	case queue <- entry:
 	default:
+		// 尽量保留高优先级日志
+		if entry.Level == "ERROR" || entry.Level == "WARN" {
+			select {
+			case <-queue:
+			default:
+			}
+			select {
+			case queue <- entry:
+			default:
+			}
+		}
 	}
 }
 

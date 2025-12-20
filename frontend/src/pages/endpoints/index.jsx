@@ -46,6 +46,7 @@ import {
   setEndpointFailoverEnabled,
   getChannels,
   createChannel,
+  updateChannel,
   deleteChannel,
   getGroupsRaw,
   activateGroup,
@@ -124,14 +125,7 @@ const DeleteConfirmDialog = ({ endpoint, onConfirm, onCancel, loading }) => (
 );
 
 const DeleteChannelConfirmDialog = ({ channelName, endpointCount = 0, onConfirm, onCancel, loading }) => {
-  const [alsoDeleteEndpoints, setAlsoDeleteEndpoints] = useState(false);
-
-  useEffect(() => {
-    setAlsoDeleteEndpoints(false);
-  }, [channelName]);
-
-  const requiresAlsoDelete = endpointCount > 0;
-  const confirmDisabled = loading || (requiresAlsoDelete && !alsoDeleteEndpoints);
+  const confirmDisabled = loading;
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-start justify-center z-50 animate-fade-in pt-[20vh]">
@@ -153,18 +147,7 @@ const DeleteChannelConfirmDialog = ({ channelName, endpointCount = 0, onConfirm,
         {endpointCount > 0 && (
           <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-amber-800 text-sm mb-4">
             <div className="font-medium">该渠道下仍有 {endpointCount} 个端点</div>
-            <label className="flex items-center gap-2 mt-2 select-none">
-              <input
-                type="checkbox"
-                checked={alsoDeleteEndpoints}
-                onChange={(e) => setAlsoDeleteEndpoints(e.target.checked)}
-                disabled={loading}
-              />
-              <span>同时删除该渠道下的所有端点</span>
-            </label>
-            <div className="text-xs text-amber-700 mt-2">
-              不勾选将不会执行删除（避免端点成为“孤儿数据”）。
-            </div>
+            <div className="text-xs text-amber-700 mt-2">确认删除将同时删除该渠道下的所有端点并删除该渠道。</div>
           </div>
         )}
 
@@ -175,7 +158,7 @@ const DeleteChannelConfirmDialog = ({ channelName, endpointCount = 0, onConfirm,
           <Button
             variant="danger"
             icon={Trash2}
-            onClick={() => onConfirm?.({ deleteEndpoints: alsoDeleteEndpoints })}
+            onClick={() => onConfirm?.()}
             loading={loading}
             disabled={confirmDisabled}
           >
@@ -670,27 +653,42 @@ const EndpointDetailModal = ({
 // 新建渠道弹窗（SQLite 模式）
 // ============================================
 
-const CreateChannelModal = ({ open, onClose, onSubmit, loading = false, serverError = '' }) => {
+const CreateChannelModal = ({
+  open,
+  onClose,
+  onSubmit,
+  loading = false,
+  serverError = '',
+  mode = 'create',
+  initialValue = null
+}) => {
   const [name, setName] = useState('');
   const [website, setWebsite] = useState('');
+  const [priority, setPriority] = useState('1');
   const [error, setError] = useState('');
 
   useEffect(() => {
     if (!open) return;
-    setName('');
-    setWebsite('');
+    const isEdit = mode === 'edit';
+    setName(isEdit ? (initialValue?.name || '') : '');
+    setWebsite(isEdit ? (initialValue?.website || '') : '');
+    setPriority(String(isEdit ? (initialValue?.priority || 1) : 1));
     setError('');
-  }, [open]);
+  }, [initialValue, mode, open]);
 
   if (!open) return null;
+
+  const isEdit = mode === 'edit';
 
   return (
     <div className="fixed inset-0 bg-slate-900/30 backdrop-blur-sm flex items-center justify-center p-4 z-[60]">
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-xl max-h-[calc(100vh-2rem)] flex flex-col overflow-hidden">
         <div className="flex items-start justify-between px-6 py-4 border-b border-slate-100">
           <div>
-            <h2 className="text-lg font-semibold text-slate-900">新建渠道</h2>
-            <p className="text-xs text-slate-500 mt-1">先创建渠道，再在渠道卡片里添加端点</p>
+            <h2 className="text-lg font-semibold text-slate-900">{isEdit ? '编辑渠道' : '新建渠道'}</h2>
+            <p className="text-xs text-slate-500 mt-1">
+              {isEdit ? '修改渠道官网与优先级' : '先创建渠道，再在渠道卡片里添加端点'}
+            </p>
           </div>
           <button
             onClick={onClose}
@@ -711,7 +709,7 @@ const CreateChannelModal = ({ open, onClose, onSubmit, loading = false, serverEr
               return;
             }
             setError('');
-            onSubmit?.({ name: trimmedName, website: website.trim() });
+            onSubmit?.({ name: trimmedName, website: website.trim(), priority });
           }}
           className="p-6 space-y-4"
         >
@@ -722,17 +720,36 @@ const CreateChannelModal = ({ open, onClose, onSubmit, loading = false, serverEr
           )}
 
           <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-slate-700">
-                渠道名称 <span className="text-rose-500">*</span>
-              </label>
-              <input
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="例如：official / backup / openai"
-                className="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
-                disabled={loading}
-              />
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div className="sm:col-span-2">
+                <label className="block text-sm font-medium text-slate-700">
+                  渠道名称 <span className="text-rose-500">*</span>
+                </label>
+                <input
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="例如：official / backup / openai"
+                  className="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                  disabled={loading}
+                  readOnly={isEdit}
+                />
+                {isEdit && (
+                  <p className="text-xs text-slate-400 mt-1">渠道名称用于关联端点，不支持修改</p>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-slate-700">优先级</label>
+                <input
+                  type="number"
+                  min={1}
+                  value={priority}
+                  onChange={(e) => setPriority(e.target.value)}
+                  className="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                  disabled={loading}
+                />
+                <p className="text-xs text-slate-400 mt-1">仅在启用渠道间故障转移时生效，数字越小越优先</p>
+              </div>
             </div>
 
             <div>
@@ -753,7 +770,7 @@ const CreateChannelModal = ({ open, onClose, onSubmit, loading = false, serverEr
               取消
             </Button>
             <Button icon={CheckCircle2} type="submit" loading={loading}>
-              创建渠道
+              {isEdit ? '保存修改' : '创建渠道'}
             </Button>
           </div>
         </form>
@@ -770,6 +787,7 @@ const ChannelCard = ({
   channelName,
   endpoints = [],
   channelWebsite = '',
+  channelPriority = null,
   groupInfo = null,
   activeChannelName = '',
   isSqliteMode = false,
@@ -779,6 +797,7 @@ const ChannelCard = ({
   onPause,
   onResume,
   onAddEndpoint,
+  onEditChannel,
   onDeleteChannel,
   onOpenEndpoint,
   onToggleEndpointFailover,
@@ -799,7 +818,9 @@ const ChannelCard = ({
 
   const isPaused = !!groupInfo?.paused;
   const computedPriority = Math.min(...endpoints.map(e => e.priority || 999));
-  const priority = groupInfo?.priority ?? (Number.isFinite(computedPriority) ? computedPriority : 999);
+  const priority = Number.isFinite(channelPriority) && channelPriority > 0
+    ? channelPriority
+    : (groupInfo?.priority ?? (Number.isFinite(computedPriority) ? computedPriority : 999));
 
   const visibleEndpoints = expanded ? endpoints : endpoints.slice(0, 2);
   const hasMore = endpoints.length > 2;
@@ -815,6 +836,11 @@ const ChannelCard = ({
         <div className="min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <h2 className="font-bold text-slate-900 truncate">{channelName}</h2>
+            {Number.isFinite(priority) && priority > 0 && priority < 999 && (
+              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                P{priority}
+              </span>
+            )}
             {isActive && (
               <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-600 border border-emerald-100">
                 活跃
@@ -837,7 +863,7 @@ const ChannelCard = ({
             )}
           </div>
           <div className="text-xs text-slate-500 mt-1">
-            端点 {totalCount} · 健康 {healthyCount}/{totalCount} · 优先级 {priority ?? '-'}
+            端点 {totalCount} · 健康 {healthyCount}/{totalCount} · 渠道优先级 {priority ?? '-'}
           </div>
           {channelWebsite && (
             <a
@@ -908,6 +934,18 @@ const ChannelCard = ({
             >
               添加端点
             </Button>
+          )}
+          {isSqliteMode && (
+            <button
+              onClick={() => onEditChannel?.(channelName)}
+              disabled={loading}
+              className={`p-2 rounded-lg transition-colors ${
+                loading ? 'text-slate-300 cursor-not-allowed' : 'text-slate-400 hover:bg-slate-100 hover:text-slate-700'
+              }`}
+              title="编辑渠道"
+            >
+              <Pencil size={16} />
+            </button>
           )}
           {isSqliteMode && (
             <button
@@ -1008,6 +1046,9 @@ const EndpointsPage = () => {
   const [showForm, setShowForm] = useState(false);
   const [showCreateChannel, setShowCreateChannel] = useState(false);
   const [createChannelError, setCreateChannelError] = useState('');
+  const [showEditChannel, setShowEditChannel] = useState(false);
+  const [editChannelError, setEditChannelError] = useState('');
+  const [editingChannel, setEditingChannel] = useState(null);
   const [editingEndpoint, setEditingEndpoint] = useState(null);
   const [defaultChannel, setDefaultChannel] = useState('');
   const [lockChannel, setLockChannel] = useState(false);
@@ -1150,6 +1191,12 @@ const EndpointsPage = () => {
     }
   }, [showCreateChannel]);
 
+  useEffect(() => {
+    if (showEditChannel) {
+      setEditChannelError('');
+    }
+  }, [showEditChannel]);
+
   // SQLite 模式下监听 Wails 事件，实时刷新端点数据
   const isSqliteModeRef = useRef(false);
   useEffect(() => {
@@ -1215,16 +1262,17 @@ const EndpointsPage = () => {
   }, [displayEndpoints, groups, isSqliteMode, storageEndpoints]);
 
   const channelOptions = useMemo(() => {
-    const set = new Set();
-    channelsMeta.forEach((c) => {
-      const name = c?.name || '';
-      if (name) set.add(name);
-    });
-    displayEndpoints.forEach((e) => {
-      const c = e.group || e.channel || '';
-      if (c) set.add(c);
-    });
-    return Array.from(set).sort();
+    const ordered = [];
+    const seen = new Set();
+    const add = (name) => {
+      if (!name) return;
+      if (seen.has(name)) return;
+      seen.add(name);
+      ordered.push(name);
+    };
+    channelsMeta.forEach((c) => add(c?.name || ''));
+    displayEndpoints.forEach((e) => add(e.group || e.channel || ''));
+    return ordered;
   }, [channelsMeta, displayEndpoints]);
 
   const groupInfoMap = useMemo(() => {
@@ -1237,36 +1285,63 @@ const EndpointsPage = () => {
 
   const channelSections = useMemo(() => {
     const getChannelKey = (ep) => ep.group || ep.channel || ep.name || 'default';
-    const map = new Map();
-    if (isSqliteMode) {
-      channelOptions.forEach((name) => map.set(name, []));
-    }
+    const map = new Map(channelOptions.map((name) => [name, []]));
     displayEndpoints.forEach((ep) => {
       const key = getChannelKey(ep);
       if (!map.has(key)) map.set(key, []);
       map.get(key).push(ep);
     });
 
-    const websiteMap = new Map();
+    const metaMap = new Map();
     channelsMeta.forEach((c) => {
-      if (c?.name) websiteMap.set(c.name, c.website || '');
+      if (c?.name) metaMap.set(c.name, c);
     });
 
+    const normalizePriority = (p) => (Number.isFinite(p) && p > 0 ? p : 999);
+    const compareDescString = (a, b) => (b || '').localeCompare(a || '');
+
     const sections = Array.from(map.entries()).map(([name, eps]) => {
+      const meta = metaMap.get(name) || null;
       const gi = groupInfoMap.get(name) || null;
       const computedPriority = eps.length > 0 ? Math.min(...eps.map(e => e.priority || 999)) : 999;
-      const priority = gi?.priority ?? (Number.isFinite(computedPriority) ? computedPriority : 999);
+      const sortPriority = normalizePriority(meta?.priority ?? gi?.priority ?? computedPriority);
+      const sortCreatedAt = meta?.createdAt || '';
+
+      const sortedEndpoints = [...eps].sort((a, b) => {
+        const pa = normalizePriority(a?.priority);
+        const pb = normalizePriority(b?.priority);
+        if (pa !== pb) return pa - pb;
+        const ca = a?.createdAt || '';
+        const cb = b?.createdAt || '';
+        const byCreated = compareDescString(ca, cb);
+        if (byCreated !== 0) return byCreated;
+        return (a?.name || '').localeCompare(b?.name || '');
+      });
+
       return {
         name,
-        website: websiteMap.get(name) || '',
-        endpoints: eps.sort((a, b) => (a.priority ?? 999) - (b.priority ?? 999)),
+        website: meta?.website || '',
+        channelPriority: meta?.priority ?? null,
+        endpoints: sortedEndpoints,
         groupInfo: gi,
-        sortPriority: priority ?? 999
+        sortPriority,
+        sortCreatedAt
       };
     });
 
-    return sections.sort((a, b) => (a.sortPriority - b.sortPriority) || a.name.localeCompare(b.name));
-  }, [channelOptions, channelsMeta, displayEndpoints, groupInfoMap, isSqliteMode]);
+    return sections.sort((a, b) => {
+      if (activeChannel) {
+        const aIsActive = a.name === activeChannel;
+        const bIsActive = b.name === activeChannel;
+        if (aIsActive && !bIsActive) return -1;
+        if (bIsActive && !aIsActive) return 1;
+      }
+      if (a.sortPriority !== b.sortPriority) return a.sortPriority - b.sortPriority;
+      const byCreated = compareDescString(a.sortCreatedAt, b.sortCreatedAt);
+      if (byCreated !== 0) return byCreated;
+      return (a.name || '').localeCompare(b.name || '');
+    });
+  }, [activeChannel, channelOptions, channelsMeta, displayEndpoints, groupInfoMap, isSqliteMode]);
 
   // 计算统计数据
   const displayStats = isSqliteMode
@@ -1299,15 +1374,6 @@ const EndpointsPage = () => {
 
       await createChannel(payload);
 
-      // 乐观更新：即使后续刷新失败，也能立刻看到新渠道
-      setChannelsMeta((prev) => {
-        const name = (payload?.name || '').trim();
-        if (!name) return prev;
-        if (prev.some((c) => c?.name === name)) return prev;
-        const next = [...prev, { name, website: (payload?.website || '').trim(), endpointCount: 0 }];
-        return next.sort((a, b) => (a?.name || '').localeCompare(b?.name || ''));
-      });
-
       setShowCreateChannel(false);
       await loadChannelsMeta();
     } catch (err) {
@@ -1317,6 +1383,37 @@ const EndpointsPage = () => {
       setChannelFormLoading(false);
     }
   }, [loadChannelsMeta]);
+
+  const handleOpenEditChannel = useCallback((channelName) => {
+    const name = (channelName || '').trim();
+    if (!name) return;
+    const meta = channelsMeta.find((c) => c?.name === name) || null;
+    setEditingChannel({
+      name,
+      website: meta?.website || '',
+      priority: meta?.priority || 1
+    });
+    setShowEditChannel(true);
+  }, [channelsMeta]);
+
+  const handleUpdateChannel = useCallback(async (payload) => {
+    try {
+      setChannelFormLoading(true);
+      setEditChannelError('');
+
+      await updateChannel(payload);
+
+      setShowEditChannel(false);
+      setEditingChannel(null);
+      await loadChannelsMeta();
+      await loadGroups();
+    } catch (err) {
+      console.error('更新渠道失败:', err);
+      setEditChannelError(err?.message || '更新渠道失败');
+    } finally {
+      setChannelFormLoading(false);
+    }
+  }, [loadChannelsMeta, loadGroups]);
 
   // 编辑端点
   const handleEdit = (endpoint) => {
@@ -1538,6 +1635,7 @@ const EndpointsPage = () => {
               channelName={section.name}
               endpoints={section.endpoints}
               channelWebsite={section.website}
+              channelPriority={section.channelPriority}
               groupInfo={section.groupInfo}
               activeChannelName={activeChannel}
               isSqliteMode={isSqliteMode}
@@ -1610,6 +1708,7 @@ const EndpointsPage = () => {
                 setLockChannel(true);
                 handleCreate();
               }}
+              onEditChannel={handleOpenEditChannel}
               onDeleteChannel={handleDeleteChannel}
               onEditEndpoint={(ep) => {
                 closeEndpointDetail();
@@ -1652,6 +1751,19 @@ const EndpointsPage = () => {
         onSubmit={handleCreateChannel}
       />
 
+      <CreateChannelModal
+        open={showEditChannel && isSqliteMode}
+        loading={channelFormLoading}
+        serverError={editChannelError}
+        mode="edit"
+        initialValue={editingChannel}
+        onClose={() => {
+          setShowEditChannel(false);
+          setEditingChannel(null);
+        }}
+        onSubmit={handleUpdateChannel}
+      />
+
       {/* 删除确认弹窗 */}
       {deleteTarget && (
         <DeleteConfirmDialog
@@ -1668,10 +1780,10 @@ const EndpointsPage = () => {
           endpointCount={deleteChannelTarget.endpointCount}
           loading={deleteChannelLoading}
           onCancel={() => setDeleteChannelTarget(null)}
-          onConfirm={async ({ deleteEndpoints }) => {
+          onConfirm={async () => {
             try {
               setDeleteChannelLoading(true);
-              await deleteChannel(deleteChannelTarget.name, deleteEndpoints);
+              await deleteChannel(deleteChannelTarget.name, true);
               setDeleteChannelTarget(null);
               await loadStorageStatus();
               await loadGroups();

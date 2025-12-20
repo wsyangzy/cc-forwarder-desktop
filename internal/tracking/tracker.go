@@ -1346,8 +1346,8 @@ func (ut *UsageTracker) GetUsageStats(ctx context.Context, startTime, endTime ti
 
 	query := `SELECT 
 		COUNT(*) as total_requests,
-		SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as success_requests,
-		SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) as error_requests,
+		SUM(CASE WHEN status IN ('completed', 'processing') THEN 1 ELSE 0 END) as success_requests,
+		SUM(CASE WHEN status IN ('failed', 'error', 'auth_error', 'rate_limited', 'server_error', 'network_error', 'stream_error', 'timeout') THEN 1 ELSE 0 END) as error_requests,
 		SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens) as total_tokens,
 		SUM(total_cost_usd) as total_cost
 		FROM request_logs 
@@ -1516,8 +1516,17 @@ func (ut *UsageTracker) processWriteQueue() {
 			writeReq.Response <- err
 
 		case <-ut.ctx.Done():
-			slog.Debug("Write processor stopped")
-			return
+			// 退出前：尽量唤醒所有等待中的写请求，避免关闭时出现 goroutine 卡死
+			drainErr := ut.ctx.Err()
+			for {
+				select {
+				case writeReq := <-ut.writeQueue:
+					writeReq.Response <- drainErr
+				default:
+					slog.Debug("Write processor stopped")
+					return
+				}
+			}
 		}
 	}
 }
@@ -1552,9 +1561,16 @@ func (ut *UsageTracker) executeWriteSimple(req WriteRequest) error {
 		}
 	}()
 
-	_, err = tx.ExecContext(ctx, req.Query, req.Args...)
+	result, err := tx.ExecContext(ctx, req.Query, req.Args...)
 	if err != nil {
 		return fmt.Errorf("failed to execute query: %w", err)
+	}
+
+	// 对于必须命中已存在记录的事件类型，确保更新确实发生，避免“看似成功但数据未写入”
+	if req.EventType == "update" && result != nil {
+		if rows, err := result.RowsAffected(); err == nil && rows == 0 {
+			return fmt.Errorf("no rows updated for event_type=update")
+		}
 	}
 
 	err = tx.Commit()

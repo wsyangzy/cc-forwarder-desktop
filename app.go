@@ -428,6 +428,9 @@ func (a *App) setupEndpointStore() {
 				a.logger.Info("✅ 渠道回填完成", "count", added)
 			}
 		}
+
+		// v6.1+: 同步渠道优先级到运行时，用于渠道间故障转移顺序
+		a.syncChannelPrioritiesToEndpointManager(ctx)
 		a.logger.Info("✅ 端点存储已启用 (SQLite)")
 	}
 }

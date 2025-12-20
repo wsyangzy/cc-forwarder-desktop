@@ -24,6 +24,9 @@ func (s *ChannelService) CreateChannel(ctx context.Context, record *store.Channe
 	if record.Name == "" {
 		return nil, fmt.Errorf("渠道名称不能为空")
 	}
+	if record.Priority <= 0 {
+		record.Priority = 1
+	}
 	existing, err := s.store.Get(ctx, record.Name)
 	if err != nil {
 		return nil, err
@@ -51,6 +54,26 @@ func (s *ChannelService) EnsureChannel(ctx context.Context, name string) error {
 
 func (s *ChannelService) ListChannels(ctx context.Context) ([]*store.ChannelRecord, error) {
 	return s.store.List(ctx)
+}
+
+func (s *ChannelService) UpdateChannel(ctx context.Context, record *store.ChannelRecord) error {
+	if record == nil {
+		return fmt.Errorf("record 不能为空")
+	}
+	if record.Name == "" {
+		return fmt.Errorf("渠道名称不能为空")
+	}
+	if record.Priority <= 0 {
+		record.Priority = 1
+	}
+	existing, err := s.store.Get(ctx, record.Name)
+	if err != nil {
+		return err
+	}
+	if existing == nil {
+		return fmt.Errorf("渠道不存在: %s", record.Name)
+	}
+	return s.store.Update(ctx, record)
 }
 
 // BackfillChannelsFromEndpoints 将历史 endpoints.channel 反写到 channels 表，确保“端点删光后渠道仍存在”。

@@ -125,6 +125,8 @@ func (ut *UsageTracker) flushBatch(events []RequestEvent) {
 // processBatch 处理一批事件（重构为使用写队列）
 func (ut *UsageTracker) processBatch(events []RequestEvent) error {
 	successCount := 0
+	failedCount := 0
+	var firstErr error
 
 	for _, event := range events {
 		// 特殊处理flush事件
@@ -137,6 +139,10 @@ func (ut *UsageTracker) processBatch(events []RequestEvent) error {
 		// 构建写操作请求
 		query, args, err := ut.buildWriteQuery(event)
 		if err != nil {
+			failedCount++
+			if firstErr == nil {
+				firstErr = err
+			}
 			slog.Error("Failed to build write query",
 				"error", err,
 				"event_type", event.Type,
@@ -155,27 +161,39 @@ func (ut *UsageTracker) processBatch(events []RequestEvent) error {
 		// 通过队列发送写操作
 		select {
 		case ut.writeQueue <- writeReq:
-			err := <-writeReq.Response
-			if err != nil {
-				slog.Error("Write operation failed",
-					"error", err,
-					"event_type", event.Type,
-					"request_id", event.RequestID)
-				continue
+			select {
+			case err := <-writeReq.Response:
+				if err != nil {
+					failedCount++
+					if firstErr == nil {
+						firstErr = err
+					}
+					slog.Error("Write operation failed",
+						"error", err,
+						"event_type", event.Type,
+						"request_id", event.RequestID)
+					continue
+				}
+				successCount++
+			case <-ut.ctx.Done():
+				return ut.ctx.Err()
 			}
-			successCount++
 
 		case <-ut.ctx.Done():
 			return ut.ctx.Err()
 		}
 	}
 
-	if successCount < len(events) {
+	if failedCount > 0 {
 		slog.Warn("Some events failed to process",
 			"success", successCount,
+			"failed", failedCount,
 			"total", len(events))
 	}
 
+	if firstErr != nil {
+		return fmt.Errorf("processBatch: %d/%d events failed: %w", failedCount, len(events), firstErr)
+	}
 	return nil
 }
 
@@ -418,20 +436,23 @@ func (ut *UsageTracker) buildUpdateQuery(event RequestEvent) (string, []interfac
 		return query, args, nil
 	}
 
-	// 使用适配器构建INSERT OR REPLACE查询
-	// 重新加入start_time，但在UPSERT时保护已有值不被覆盖
-	columns := []string{"request_id", "endpoint_name", "group_name", "status", "retry_count", "http_status_code", "start_time", "updated_at"}
-	placeholders := []string{"?", "?", "?", "?", "?", "?", "?", ut.adapter.BuildDateTimeNow()}
-	query := ut.adapter.BuildInsertOrReplaceQuery("request_logs", columns, placeholders)
+	// 正常更新所有字段（避免 INSERT OR REPLACE / UPSERT 带来的数据丢失风险）
+	query := fmt.Sprintf(`UPDATE request_logs SET
+		endpoint_name = ?,
+		group_name = ?,
+		status = ?,
+		retry_count = ?,
+		http_status_code = ?,
+		updated_at = %s
+	WHERE request_id = ?`, ut.adapter.BuildDateTimeNow())
 
 	args := []interface{}{
-		event.RequestID,
 		data.EndpointName,
 		data.GroupName,
 		data.Status,
 		data.RetryCount,
 		data.HTTPStatus,
-		event.Timestamp, // 提供start_time值用于插入新记录
+		event.RequestID,
 	}
 
 	return query, args, nil
@@ -616,8 +637,8 @@ func (ut *UsageTracker) buildFinalFailureQuery(event RequestEvent) (string, []in
 			inputTokens,
 			outputTokens,
 			cacheCreationTokens,
-			cacheCreation5mTokens,  // 🔧 [修复] 2025-12-11
-			cacheCreation1hTokens,  // 🔧 [修复] 2025-12-11
+			cacheCreation5mTokens, // 🔧 [修复] 2025-12-11
+			cacheCreation1hTokens, // 🔧 [修复] 2025-12-11
 			cacheReadTokens,
 			event.RequestID,
 		}
@@ -650,8 +671,8 @@ func (ut *UsageTracker) buildFinalFailureQuery(event RequestEvent) (string, []in
 			inputTokens,
 			outputTokens,
 			cacheCreationTokens,
-			cacheCreation5mTokens,  // 🔧 [修复] 2025-12-11
-			cacheCreation1hTokens,  // 🔧 [修复] 2025-12-11
+			cacheCreation5mTokens, // 🔧 [修复] 2025-12-11
+			cacheCreation1hTokens, // 🔧 [修复] 2025-12-11
 			cacheReadTokens,
 			event.RequestID,
 		}
@@ -1104,7 +1125,6 @@ func (ut *UsageTracker) updateUsageSummary() {
 	endDate := time.Now()
 	startDate := endDate.AddDate(0, 0, -7)
 
-	// 使用适配器构建INSERT OR REPLACE查询
 	columns := []string{
 		"date", "model_name", "endpoint_name", "group_name",
 		"request_count", "success_count", "error_count",
@@ -1114,39 +1134,45 @@ func (ut *UsageTracker) updateUsageSummary() {
 		"created_at", "updated_at",
 	}
 
-	placeholders := make([]string, len(columns))
-	for i := range placeholders {
-		placeholders[i] = "?"
-	}
-
-	baseQuery := ut.adapter.BuildInsertOrReplaceQuery("usage_summary", columns, placeholders)
-
 	// 构建SELECT子查询
 	selectQuery := fmt.Sprintf(`
-	SELECT
-		DATE(start_time) as date,
-		COALESCE(model_name, '') as model_name,
-		COALESCE(endpoint_name, '') as endpoint_name,
-		COALESCE(group_name, '') as group_name,
-		COUNT(*) as request_count,
-		SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as success_count,
-		SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) as error_count,
-		SUM(input_tokens) as total_input_tokens,
-		SUM(output_tokens) as total_output_tokens,
-		SUM(cache_creation_tokens) as total_cache_creation_tokens,
-		SUM(cache_read_tokens) as total_cache_read_tokens,
-		SUM(total_cost_usd) as total_cost_usd,
-		AVG(CASE WHEN duration_ms IS NOT NULL AND duration_ms > 0 THEN duration_ms ELSE NULL END) as avg_duration_ms,
-		%s as created_at,
-		%s as updated_at
-	FROM request_logs
-	WHERE start_time >= ? AND start_time < ?
-		AND (model_name IS NOT NULL OR endpoint_name IS NOT NULL)
-	GROUP BY DATE(start_time), model_name, endpoint_name, group_name
-	`, ut.adapter.BuildDateTimeNow(), ut.adapter.BuildDateTimeNow())
+SELECT
+	DATE(start_time) as date,
+	COALESCE(model_name, '') as model_name,
+	COALESCE(endpoint_name, '') as endpoint_name,
+	COALESCE(group_name, '') as group_name,
+	COUNT(*) as request_count,
+	SUM(CASE WHEN status IN ('completed', 'processing') THEN 1 ELSE 0 END) as success_count,
+	SUM(CASE WHEN status IN ('failed', 'error', 'auth_error', 'rate_limited', 'server_error', 'network_error', 'stream_error', 'timeout') THEN 1 ELSE 0 END) as error_count,
+	SUM(input_tokens) as total_input_tokens,
+	SUM(output_tokens) as total_output_tokens,
+	SUM(cache_creation_tokens) as total_cache_creation_tokens,
+	SUM(cache_read_tokens) as total_cache_read_tokens,
+	SUM(total_cost_usd) as total_cost_usd,
+	AVG(CASE WHEN duration_ms IS NOT NULL AND duration_ms > 0 THEN duration_ms ELSE NULL END) as avg_duration_ms,
+	%s as created_at,
+	%s as updated_at
+FROM request_logs
+WHERE start_time >= ? AND start_time < ?
+	AND (model_name IS NOT NULL OR endpoint_name IS NOT NULL)
+GROUP BY DATE(start_time), model_name, endpoint_name, group_name
+`, ut.adapter.BuildDateTimeNow(), ut.adapter.BuildDateTimeNow())
 
-	// 拼接完整查询
-	query := strings.Replace(baseQuery, "VALUES ("+strings.Join(placeholders, ", ")+")", "("+selectQuery+")", 1)
+	// usage_summary 的唯一约束是 (date, model_name, endpoint_name, group_name)，不能复用 request_id 的 upsert 模板。
+	query := fmt.Sprintf(`INSERT INTO usage_summary (%s)
+%s
+ON CONFLICT(date, model_name, endpoint_name, group_name) DO UPDATE SET
+	request_count = EXCLUDED.request_count,
+	success_count = EXCLUDED.success_count,
+	error_count = EXCLUDED.error_count,
+	total_input_tokens = EXCLUDED.total_input_tokens,
+	total_output_tokens = EXCLUDED.total_output_tokens,
+	total_cache_creation_tokens = EXCLUDED.total_cache_creation_tokens,
+	total_cache_read_tokens = EXCLUDED.total_cache_read_tokens,
+	total_cost_usd = EXCLUDED.total_cost_usd,
+	avg_duration_ms = EXCLUDED.avg_duration_ms,
+	updated_at = EXCLUDED.updated_at
+`, strings.Join(columns, ", "), selectQuery)
 
 	summaryWriteReq := WriteRequest{
 		Query:     query,
@@ -1158,11 +1184,15 @@ func (ut *UsageTracker) updateUsageSummary() {
 
 	select {
 	case ut.writeQueue <- summaryWriteReq:
-		err := <-summaryWriteReq.Response
-		if err != nil {
-			slog.Error("Failed to update usage summary", "error", err)
-		} else {
-			slog.Info("Usage summary updated successfully")
+		select {
+		case err := <-summaryWriteReq.Response:
+			if err != nil {
+				slog.Error("Failed to update usage summary", "error", err)
+			} else {
+				slog.Info("Usage summary updated successfully")
+			}
+		case <-ut.ctx.Done():
+			slog.Debug("Usage summary update cancelled due to context cancellation")
 		}
 	case <-ut.ctx.Done():
 		slog.Debug("Usage summary update cancelled due to context cancellation")

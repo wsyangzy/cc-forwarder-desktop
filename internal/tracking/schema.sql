@@ -184,6 +184,7 @@ CREATE TABLE IF NOT EXISTS channels (
 
     name TEXT UNIQUE NOT NULL,                      -- 渠道名称
     website TEXT,                                   -- 渠道官网（可选）
+    priority INTEGER DEFAULT 1,                     -- 渠道优先级（数字越小越高，用于渠道间故障转移顺序）
 
     created_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00'),
     updated_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00')

@@ -41,7 +41,7 @@ const OverviewPage = () => {
     <div className="animate-fade-in">
       {/* 页面标题 */}
       <div className="mb-8">
-        <h1 className="text-2xl font-bold text-slate-900">Dashboard</h1>
+        <h1 className="text-2xl font-bold text-slate-900">概览</h1>
         <p className="text-slate-500 text-sm mt-1">高性能 API 请求转发器监控面板</p>
       </div>
 

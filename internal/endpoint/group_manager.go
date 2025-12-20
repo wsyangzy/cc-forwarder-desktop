@@ -31,6 +31,7 @@ type GroupManager struct {
 	config           *config.Config
 	mutex            sync.RWMutex
 	cooldownDuration time.Duration
+	channelPriorities map[string]int
 	// Group change notification subscribers
 	groupChangeSubscribers []chan string
 	subscriberMutex        sync.RWMutex
@@ -52,6 +53,7 @@ func NewGroupManager(cfg *config.Config) *GroupManager {
 		groups:                 make(map[string]*GroupInfo),
 		config:                 cfg,
 		cooldownDuration:       cooldownDuration,
+		channelPriorities:      make(map[string]int),
 		groupChangeSubscribers: make([]chan string, 0),
 	}
 }
@@ -72,6 +74,35 @@ func (gm *GroupManager) UpdateConfig(cfg *config.Config) {
 	}
 	if gm.cooldownDuration == 0 {
 		gm.cooldownDuration = 10 * time.Minute
+	}
+}
+
+// UpdateChannelPriorities 更新“渠道(channel)”的优先级映射。
+// v6.1.0: 渠道优先级仅用于“渠道间”故障转移顺序；渠道内端点故障转移仍由端点 priority 决定。
+func (gm *GroupManager) UpdateChannelPriorities(priorities map[string]int) {
+	gm.mutex.Lock()
+	defer gm.mutex.Unlock()
+
+	next := make(map[string]int, len(priorities))
+	for name, p := range priorities {
+		if name == "" {
+			continue
+		}
+		if p <= 0 {
+			p = 1
+		}
+		next[name] = p
+	}
+	gm.channelPriorities = next
+
+	// 尽最大努力即时同步到已存在的组（不依赖 UpdateGroups 重建）
+	for name, group := range gm.groups {
+		if group == nil {
+			continue
+		}
+		if p, ok := gm.channelPriorities[name]; ok {
+			group.Priority = p
+		}
 	}
 }
 
@@ -148,6 +179,20 @@ func (gm *GroupManager) UpdateGroups(endpoints []*Endpoint) {
 			}
 		}
 		group.ManuallyPaused = allDisabled
+	}
+
+	// v6.1.0: 渠道优先级优先于端点优先级（仅用于渠道间选择顺序）
+	for name, group := range newGroups {
+		if group == nil {
+			continue
+		}
+		if p, ok := gm.channelPriorities[name]; ok && p > 0 {
+			group.Priority = p
+			continue
+		}
+		if group.Priority <= 0 {
+			group.Priority = 1
+		}
 	}
 
 	gm.groups = newGroups
@@ -251,9 +296,9 @@ func (gm *GroupManager) updateActiveGroups() {
 			// Determine activation strategy based on startup vs runtime context
 			var shouldAutoActivate bool
 			if isActualStartup {
-				// Always auto-activate priority 1 group at startup for better UX
+				// 启动时：激活最高优先级可用组（更符合用户直觉）
 				shouldAutoActivate = true
-				slog.Debug("🚀 [组管理] 检测到系统启动 - 尝试激活优先级1组")
+				slog.Debug("🚀 [组管理] 检测到系统启动 - 尝试激活最高优先级可用组")
 			} else {
 				// This is runtime failure - respect manual mode + suspend settings
 				// v6.0: Failover.Enabled 仅控制“渠道间”故障转移/自动切换行为
@@ -272,7 +317,7 @@ func (gm *GroupManager) updateActiveGroups() {
 				sortedGroups := gm.getSortedGroups()
 				for _, group := range sortedGroups {
 					// 关键修复：检查组是否被手动暂停（包括因失败而暂停的组）
-					if group.Priority == 1 && group.CooldownUntil.IsZero() && !group.ManuallyPaused {
+					if group.CooldownUntil.IsZero() && !group.ManuallyPaused {
 						// Check if this group has healthy endpoints
 						hasHealthyEndpoints := false
 						for _, ep := range group.Endpoints {
@@ -288,9 +333,9 @@ func (gm *GroupManager) updateActiveGroups() {
 							autoSwitchEnabled := gm.config.Failover.Enabled
 							if isActualStartup {
 								if autoSwitchEnabled {
-									slog.Info(fmt.Sprintf("🚀 [自动模式] 启动时激活优先级1组: %s (有健康端点)", group.Name))
+									slog.Info(fmt.Sprintf("🚀 [自动模式] 启动时激活最高优先级可用组: %s (有健康端点)", group.Name))
 								} else {
-									slog.Info(fmt.Sprintf("🚀 [手动模式] 启动时激活优先级1组: %s (有健康端点) - 后续故障将启用挂起", group.Name))
+									slog.Info(fmt.Sprintf("🚀 [手动模式] 启动时激活最高优先级可用组: %s (有健康端点) - 后续故障将启用挂起", group.Name))
 								}
 							} else {
 								slog.Info(fmt.Sprintf("🔄 [运行时] 激活可用组: %s (优先级: %d, 有健康端点)", group.Name, group.Priority))
@@ -328,7 +373,10 @@ func (gm *GroupManager) getSortedGroups() []*GroupInfo {
 	}
 
 	sort.Slice(groups, func(i, j int) bool {
-		return groups[i].Priority < groups[j].Priority
+		if groups[i].Priority != groups[j].Priority {
+			return groups[i].Priority < groups[j].Priority
+		}
+		return groups[i].Name < groups[j].Name
 	})
 
 	return groups
@@ -350,7 +398,10 @@ func (gm *GroupManager) GetActiveGroups() []*GroupInfo {
 
 	// Sort by priority
 	sort.Slice(active, func(i, j int) bool {
-		return active[i].Priority < active[j].Priority
+		if active[i].Priority != active[j].Priority {
+			return active[i].Priority < active[j].Priority
+		}
+		return active[i].Name < active[j].Name
 	})
 
 	return active
@@ -370,7 +421,10 @@ func (gm *GroupManager) GetAllGroups() []*GroupInfo {
 
 	// Sort by priority
 	sort.Slice(groups, func(i, j int) bool {
-		return groups[i].Priority < groups[j].Priority
+		if groups[i].Priority != groups[j].Priority {
+			return groups[i].Priority < groups[j].Priority
+		}
+		return groups[i].Name < groups[j].Name
 	})
 
 	return groups

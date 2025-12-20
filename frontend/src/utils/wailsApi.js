@@ -871,6 +871,8 @@ export const getChannels = async () => {
   return (channels || []).map(c => ({
     name: c.name,
     website: c.website || '',
+    priority: c.priority || 1,
+    createdAt: c.created_at || '',
     endpointCount: c.endpoint_count
   }));
 };
@@ -879,12 +881,32 @@ export const createChannel = async (input) => {
   await initWails();
   if (!WailsApp) throw new Error('Wails not available');
 
+  const priority = parseInt(input?.priority, 10);
   const payload = {
     name: (input?.name || '').trim(),
-    website: (input?.website || '').trim()
+    website: (input?.website || '').trim(),
+    priority: Number.isFinite(priority) && priority > 0 ? priority : 1
   };
 
   await WailsApp.CreateChannel(payload);
+  return { success: true };
+};
+
+export const updateChannel = async (input) => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+
+  const channelName = (input?.name || '').trim();
+  if (!channelName) throw new Error('渠道名称不能为空');
+
+  const priority = parseInt(input?.priority, 10);
+  const payload = {
+    name: channelName,
+    website: (input?.website || '').trim(),
+    priority: Number.isFinite(priority) && priority > 0 ? priority : 1
+  };
+
+  await WailsApp.UpdateChannel(payload);
   return { success: true };
 };
 

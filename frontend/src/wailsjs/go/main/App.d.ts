@@ -109,6 +109,8 @@ export function ToggleEndpointRecord(arg1:string,arg2:boolean):Promise<void>;
 
 export function TriggerHealthCheck(arg1:string):Promise<void>;
 
+export function UpdateChannel(arg1:main.UpdateChannelInput):Promise<void>;
+
 export function UpdateEndpointRecord(arg1:string,arg2:main.CreateEndpointInput):Promise<void>;
 
 export function UpdateModelPricing(arg1:string,arg2:main.CreateModelPricingInput):Promise<void>;

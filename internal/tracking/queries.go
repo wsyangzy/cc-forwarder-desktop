@@ -269,11 +269,11 @@ func (ut *UsageTracker) QueryRequestDetails(ctx context.Context, opts *QueryOpti
 
 	if opts.StartDate != nil {
 		query += " AND start_time >= ?"
-		args = append(args, opts.StartDate.Format("2006-01-02 15:04:05-07:00"))
+		args = append(args, *opts.StartDate)
 	}
 	if opts.EndDate != nil {
 		query += " AND start_time <= ?"
-		args = append(args, opts.EndDate.Format("2006-01-02 15:04:05-07:00"))
+		args = append(args, *opts.EndDate)
 	}
 	if opts.ModelName != "" {
 		query += " AND model_name = ?"
@@ -455,11 +455,11 @@ func (ut *UsageTracker) QueryUsageStatsTotals(ctx context.Context, opts *QueryOp
 	if opts != nil {
 		if opts.StartDate != nil {
 			query += " AND start_time >= ?"
-			args = append(args, opts.StartDate.Format("2006-01-02 15:04:05-07:00"))
+			args = append(args, *opts.StartDate)
 		}
 		if opts.EndDate != nil {
 			query += " AND start_time <= ?"
-			args = append(args, opts.EndDate.Format("2006-01-02 15:04:05-07:00"))
+			args = append(args, *opts.EndDate)
 		}
 		if opts.ModelName != "" {
 			query += " AND model_name = ?"
@@ -553,11 +553,11 @@ func (ut *UsageTracker) CountRequestDetails(ctx context.Context, opts *QueryOpti
 
 	if opts.StartDate != nil {
 		query += " AND start_time >= ?"
-		args = append(args, opts.StartDate.Format("2006-01-02 15:04:05-07:00"))
+		args = append(args, *opts.StartDate)
 	}
 	if opts.EndDate != nil {
 		query += " AND start_time <= ?"
-		args = append(args, opts.EndDate.Format("2006-01-02 15:04:05-07:00"))
+		args = append(args, *opts.EndDate)
 	}
 	if opts.ModelName != "" {
 		query += " AND model_name = ?"

@@ -540,6 +540,8 @@ func (a *App) ToggleEndpointRecord(name string, enabled bool) error {
 type ChannelInfo struct {
 	Name          string `json:"name"`
 	Website       string `json:"website,omitempty"`
+	Priority      int    `json:"priority"`
+	CreatedAt     string `json:"created_at"`
 	EndpointCount int    `json:"endpoint_count"`
 }
 
@@ -586,6 +588,9 @@ func (a *App) GetChannels() ([]ChannelInfo, error) {
 	}
 
 	channelWebsite := make(map[string]string)
+	channelPriority := make(map[string]int)
+	channelCreatedAt := make(map[string]string)
+	orderedChannels := make([]string, 0, 16)
 	if channelService != nil {
 		channelRecords, err := channelService.ListChannels(ctx)
 		if err != nil {
@@ -596,22 +601,67 @@ func (a *App) GetChannels() ([]ChannelInfo, error) {
 				continue
 			}
 			channelWebsite[c.Name] = c.Website
+			if c.Priority <= 0 {
+				channelPriority[c.Name] = 1
+			} else {
+				channelPriority[c.Name] = c.Priority
+			}
+			if !c.CreatedAt.IsZero() {
+				channelCreatedAt[c.Name] = c.CreatedAt.Format("2006-01-02 15:04:05")
+			}
 			if _, ok := channelCount[c.Name]; !ok {
 				channelCount[c.Name] = 0
 			}
+			orderedChannels = append(orderedChannels, c.Name)
 		}
 	}
 
+	seen := make(map[string]struct{}, len(channelCount))
 	result := make([]ChannelInfo, 0, len(channelCount))
-	for name, count := range channelCount {
+
+	// 1) channels 表中的渠道（已按 store 层排序），优先输出，保证 UI 顺序稳定
+	for _, name := range orderedChannels {
+		count := channelCount[name]
 		result = append(result, ChannelInfo{
 			Name:          name,
 			Website:       channelWebsite[name],
+			Priority:      channelPriority[name],
+			CreatedAt:     channelCreatedAt[name],
+			EndpointCount: count,
+		})
+		seen[name] = struct{}{}
+	}
+
+	// 2) 兼容：端点表里存在但 channels 表未收录的渠道（作为兜底）
+	for name, count := range channelCount {
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		result = append(result, ChannelInfo{
+			Name:          name,
+			Website:       channelWebsite[name],
+			Priority:      999,
+			CreatedAt:     "",
 			EndpointCount: count,
 		})
 	}
 
 	sort.Slice(result, func(i, j int) bool {
+		pi := result[i].Priority
+		pj := result[j].Priority
+		if pi <= 0 {
+			pi = 1
+		}
+		if pj <= 0 {
+			pj = 1
+		}
+		if pi != pj {
+			return pi < pj
+		}
+		// 同优先级：按创建时间倒序（新创建排在前面）
+		if result[i].CreatedAt != result[j].CreatedAt {
+			return result[i].CreatedAt > result[j].CreatedAt
+		}
 		return result[i].Name < result[j].Name
 	})
 	return result, nil
@@ -620,11 +670,13 @@ func (a *App) GetChannels() ([]ChannelInfo, error) {
 type CreateChannelInput struct {
 	Name    string `json:"name"`
 	Website string `json:"website,omitempty"`
+	Priority int   `json:"priority"`
 }
 
 func (a *App) CreateChannel(input CreateChannelInput) error {
 	a.mu.RLock()
 	channelService := a.channelService
+	endpointManager := a.endpointManager
 	logger := a.logger
 	a.mu.RUnlock()
 
@@ -636,13 +688,17 @@ func (a *App) CreateChannel(input CreateChannelInput) error {
 	if input.Name == "" {
 		return fmt.Errorf("渠道名称不能为空")
 	}
+	if input.Priority <= 0 {
+		input.Priority = 1
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	_, err := channelService.CreateChannel(ctx, &store.ChannelRecord{
-		Name:    input.Name,
-		Website: input.Website,
+		Name:     input.Name,
+		Website:  input.Website,
+		Priority: input.Priority,
 	})
 	if err != nil {
 		return err
@@ -650,7 +706,103 @@ func (a *App) CreateChannel(input CreateChannelInput) error {
 	if logger != nil {
 		logger.Info("✅ 渠道已创建", "name", input.Name)
 	}
+
+	// 同步渠道优先级到运行时（用于渠道间故障转移顺序）
+	if endpointManager != nil {
+		a.syncChannelPrioritiesToEndpointManager(ctx)
+	}
 	return nil
+}
+
+type UpdateChannelInput struct {
+	Name     string `json:"name"`
+	Website  string `json:"website,omitempty"`
+	Priority int    `json:"priority"`
+}
+
+func (a *App) UpdateChannel(input UpdateChannelInput) error {
+	a.mu.RLock()
+	channelService := a.channelService
+	endpointManager := a.endpointManager
+	logger := a.logger
+	a.mu.RUnlock()
+
+	if channelService == nil {
+		return fmt.Errorf("渠道存储服务未启用")
+	}
+
+	input.Name = strings.TrimSpace(input.Name)
+	input.Website = strings.TrimSpace(input.Website)
+	if input.Name == "" {
+		return fmt.Errorf("渠道名称不能为空")
+	}
+	if input.Priority <= 0 {
+		input.Priority = 1
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := channelService.UpdateChannel(ctx, &store.ChannelRecord{
+		Name:     input.Name,
+		Website:  input.Website,
+		Priority: input.Priority,
+	}); err != nil {
+		return err
+	}
+
+	if endpointManager != nil {
+		a.syncChannelPrioritiesToEndpointManager(ctx)
+	}
+
+	// 推送前端刷新（channelsMeta & groups）
+	a.emitEndpointUpdate()
+
+	if logger != nil {
+		logger.Info("✅ 渠道已更新", "name", input.Name, "priority", input.Priority)
+	}
+	return nil
+}
+
+func (a *App) syncChannelPrioritiesToEndpointManager(ctx context.Context) {
+	a.mu.RLock()
+	channelStore := a.channelStore
+	endpointManager := a.endpointManager
+	logger := a.logger
+	a.mu.RUnlock()
+
+	if channelStore == nil || endpointManager == nil {
+		return
+	}
+
+	baseCtx := ctx
+	if baseCtx == nil || baseCtx.Err() != nil {
+		baseCtx = context.Background()
+	}
+
+	syncCtx, cancel := context.WithTimeout(baseCtx, 3*time.Second)
+	defer cancel()
+
+	records, err := channelStore.List(syncCtx)
+	if err != nil {
+		if logger != nil {
+			logger.Warn("⚠️ 同步渠道优先级失败", "error", err)
+		}
+		return
+	}
+
+	priorities := make(map[string]int, len(records))
+	for _, r := range records {
+		if r == nil || r.Name == "" {
+			continue
+		}
+		p := r.Priority
+		if p <= 0 {
+			p = 1
+		}
+		priorities[r.Name] = p
+	}
+	endpointManager.UpdateChannelPriorities(priorities)
 }
 
 // DeleteChannel 删除渠道

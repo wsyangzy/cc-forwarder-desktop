@@ -11,6 +11,8 @@ import (
 	"cc-forwarder/internal/tracking"
 )
 
+const usageDBQueryTimeout = 8 * time.Second
+
 // ============================================================
 // 使用统计 API
 // ============================================================
@@ -65,8 +67,6 @@ func (a *App) GetUsageSummary(startTimeStr, endTimeStr string) (UsageSummary, er
 		var todayRequests int64
 
 		if usageTracker != nil {
-			ctx := context.Background()
-
 			// 获取配置的时区
 			loc := time.Local
 			if cfg != nil && cfg.Timezone != "" {
@@ -76,13 +76,17 @@ func (a *App) GetUsageSummary(startTimeStr, endTimeStr string) (UsageSummary, er
 			}
 
 			// 直接从 request_logs 表查询全部历史统计
+			ctx, cancel := context.WithTimeout(context.Background(), usageDBQueryTimeout)
 			allTimeTotalCost, allTimeTotalTokens, allTimeTotal = queryStatsFromDB(ctx, logger, usageTracker, time.Time{}, time.Now())
+			cancel()
 
 			// 查询今日统计（使用配置的时区）
 			now := time.Now().In(loc)
 			todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
 			todayEnd := todayStart.Add(24 * time.Hour)
+			ctx, cancel = context.WithTimeout(context.Background(), usageDBQueryTimeout)
 			todayCost, todayTokens, todayRequests = queryStatsFromDB(ctx, logger, usageTracker, todayStart, todayEnd)
+			cancel()
 		}
 
 		return UsageSummary{
@@ -128,7 +132,8 @@ func (a *App) GetUsageSummary(startTimeStr, endTimeStr string) (UsageSummary, er
 		endTime = time.Now()
 	}
 
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), usageDBQueryTimeout)
+	defer cancel()
 	summaries, err := usageTracker.GetUsageSummary(ctx, startTime, endTime)
 	if err != nil {
 		return UsageSummary{}, err
@@ -251,7 +256,8 @@ func (a *App) GetRequests(params RequestQueryParams) (RequestListResult, error) 
 
 	offset := (page - 1) * pageSize
 
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), usageDBQueryTimeout)
+	defer cancel()
 
 	// 解析时间参数（使用配置的时区）
 	loc := time.Local

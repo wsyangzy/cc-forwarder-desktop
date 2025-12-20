@@ -112,6 +112,8 @@ export namespace main {
 	export class ChannelInfo {
 	    name: string;
 	    website?: string;
+	    priority: number;
+	    created_at: string;
 	    endpoint_count: number;
 	
 	    static createFrom(source: any = {}) {
@@ -122,6 +124,8 @@ export namespace main {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
 	        this.website = source["website"];
+	        this.priority = source["priority"];
+	        this.created_at = source["created_at"];
 	        this.endpoint_count = source["endpoint_count"];
 	    }
 	}
@@ -180,6 +184,7 @@ export namespace main {
 	export class CreateChannelInput {
 	    name: string;
 	    website?: string;
+	    priority: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new CreateChannelInput(source);
@@ -189,6 +194,7 @@ export namespace main {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
 	        this.website = source["website"];
+	        this.priority = source["priority"];
 	    }
 	}
 	export class CreateEndpointInput {
@@ -831,6 +837,22 @@ export namespace main {
 	        this.cache_creation_tokens = source["cache_creation_tokens"];
 	        this.cache_read_tokens = source["cache_read_tokens"];
 	        this.total_tokens = source["total_tokens"];
+	    }
+	}
+	export class UpdateChannelInput {
+	    name: string;
+	    website?: string;
+	    priority: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new UpdateChannelInput(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.website = source["website"];
+	        this.priority = source["priority"];
 	    }
 	}
 	

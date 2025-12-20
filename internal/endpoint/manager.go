@@ -61,6 +61,14 @@ type Manager struct {
 	onFailoverTriggered func(failedChannel, newChannel string)
 }
 
+// UpdateChannelPriorities 同步渠道优先级到运行时组管理器，用于“渠道间”故障转移顺序。
+func (m *Manager) UpdateChannelPriorities(priorities map[string]int) {
+	if m == nil || m.groupManager == nil {
+		return
+	}
+	m.groupManager.UpdateChannelPriorities(priorities)
+}
+
 // NewManager creates a new endpoint manager
 func NewManager(cfg *config.Config) *Manager {
 	ctx, cancel := context.WithCancel(context.Background())

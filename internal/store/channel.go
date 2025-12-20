@@ -14,8 +14,9 @@ import (
 type ChannelRecord struct {
 	ID int64 `json:"id"`
 
-	Name    string `json:"name"`
-	Website string `json:"website,omitempty"`
+	Name     string `json:"name"`
+	Website  string `json:"website,omitempty"`
+	Priority int    `json:"priority"`
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
@@ -75,13 +76,16 @@ func (s *SQLiteChannelStore) Create(ctx context.Context, record *ChannelRecord) 
 	if record.Name == "" {
 		return nil, fmt.Errorf("渠道名称不能为空")
 	}
+	if record.Priority <= 0 {
+		record.Priority = 1
+	}
 
 	s.mu.Lock()
 	query := `
-		INSERT INTO channels (name, website)
-		VALUES (?, ?)
+		INSERT INTO channels (name, website, priority)
+		VALUES (?, ?, ?)
 	`
-	res, err := s.execContext(ctx, query, record.Name, nullIfEmpty(record.Website))
+	res, err := s.execContext(ctx, query, record.Name, nullIfEmpty(record.Website), record.Priority)
 	if err != nil {
 		s.mu.Unlock()
 		return nil, fmt.Errorf("创建渠道失败: %w", err)
@@ -102,7 +106,7 @@ func (s *SQLiteChannelStore) Get(ctx context.Context, name string) (*ChannelReco
 	defer s.mu.RUnlock()
 
 	query := `
-		SELECT id, name, COALESCE(website, ''), created_at, updated_at
+		SELECT id, name, COALESCE(website, ''), COALESCE(priority, 1), created_at, updated_at
 		FROM channels
 		WHERE name = ?
 	`
@@ -114,6 +118,7 @@ func (s *SQLiteChannelStore) Get(ctx context.Context, name string) (*ChannelReco
 		&record.ID,
 		&record.Name,
 		&record.Website,
+		&record.Priority,
 		&createdAt,
 		&updatedAt,
 	)
@@ -124,8 +129,8 @@ func (s *SQLiteChannelStore) Get(ctx context.Context, name string) (*ChannelReco
 		return nil, fmt.Errorf("获取渠道失败: %w", err)
 	}
 
-	record.CreatedAt, _ = time.Parse("2006-01-02 15:04:05.999999-07:00", createdAt)
-	record.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05.999999-07:00", updatedAt)
+	record.CreatedAt = parseSQLiteDateTime(createdAt)
+	record.UpdatedAt = parseSQLiteDateTime(updatedAt)
 
 	return &record, nil
 }
@@ -135,9 +140,9 @@ func (s *SQLiteChannelStore) List(ctx context.Context) ([]*ChannelRecord, error)
 	defer s.mu.RUnlock()
 
 	query := `
-		SELECT id, name, COALESCE(website, ''), created_at, updated_at
+		SELECT id, name, COALESCE(website, ''), COALESCE(priority, 1), created_at, updated_at
 		FROM channels
-		ORDER BY name ASC
+		ORDER BY COALESCE(priority, 1) ASC, created_at DESC, name ASC
 	`
 	rows, err := s.queryContext(ctx, query)
 	if err != nil {
@@ -149,11 +154,11 @@ func (s *SQLiteChannelStore) List(ctx context.Context) ([]*ChannelRecord, error)
 	for rows.Next() {
 		var record ChannelRecord
 		var createdAt, updatedAt string
-		if err := rows.Scan(&record.ID, &record.Name, &record.Website, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&record.ID, &record.Name, &record.Website, &record.Priority, &createdAt, &updatedAt); err != nil {
 			return nil, fmt.Errorf("读取渠道失败: %w", err)
 		}
-		record.CreatedAt, _ = time.Parse("2006-01-02 15:04:05.999999-07:00", createdAt)
-		record.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05.999999-07:00", updatedAt)
+		record.CreatedAt = parseSQLiteDateTime(createdAt)
+		record.UpdatedAt = parseSQLiteDateTime(updatedAt)
 		result = append(result, &record)
 	}
 	if err := rows.Err(); err != nil {
@@ -172,9 +177,12 @@ func (s *SQLiteChannelStore) Update(ctx context.Context, record *ChannelRecord) 
 	if record.Name == "" {
 		return fmt.Errorf("渠道名称不能为空")
 	}
+	if record.Priority <= 0 {
+		record.Priority = 1
+	}
 
-	query := `UPDATE channels SET website = ? WHERE name = ?`
-	res, err := s.execContext(ctx, query, nullIfEmpty(record.Website), record.Name)
+	query := `UPDATE channels SET website = ?, priority = ? WHERE name = ?`
+	res, err := s.execContext(ctx, query, nullIfEmpty(record.Website), record.Priority, record.Name)
 	if err != nil {
 		return fmt.Errorf("更新渠道失败: %w", err)
 	}

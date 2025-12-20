@@ -214,6 +214,10 @@ export function TriggerHealthCheck(arg1) {
   return window['go']['main']['App']['TriggerHealthCheck'](arg1);
 }
 
+export function UpdateChannel(arg1) {
+  return window['go']['main']['App']['UpdateChannel'](arg1);
+}
+
 export function UpdateEndpointRecord(arg1, arg2) {
   return window['go']['main']['App']['UpdateEndpointRecord'](arg1, arg2);
 }
