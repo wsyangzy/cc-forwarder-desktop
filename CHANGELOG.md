@@ -5,6 +5,26 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 项目遵循 [语义化版本控制](https://semver.org/lang/zh-CN/)。
 
+## [5.2.1] - 2025-12-20
+
+### 🔧 改进 (Improvements)
+
+- **EOF 重试机制改进**: 使用双 message_start 模式触发客户端自动重试
+  - 发送完整的 Anthropic 流式消息序列（message_start → content_block → message_delta → message_stop）
+  - 修复 usage 字段使用 Anthropic 风格（input_tokens/output_tokens）
+  - 修复模型名称优先级：优先使用从流中解析的模型名称
+
+- **EOF 调试增强**: 流中断时始终保存 debug 文件，无论是否有 Token 信息
+  - 方便调试 EOF 错误场景
+  - 保存完整的流式数据内容
+
+- **Debug 文件自动清理**: 防止调试文件无限增长
+  - 按天数清理：删除 N 天前的文件（默认 7 天）
+  - 按数量清理：保留最新的 N 个文件（默认 50 个）
+  - 节流机制：每 24 小时最多执行一次清理
+
+---
+
 ## [5.2.0] - 2025-12-20
 
 ### ✨ 新增功能 (New Features)

@@ -675,6 +675,14 @@ func (sp *StreamProcessor) handlePartialStreamV2(err error) (*tracking.TokenUsag
 		sp.errorRecovery.RecoverFromPartialData(sp.requestID, sp.partialData, time.Since(sp.startTime))
 	}
 
+	// 🔍 [EOF调试] 流中断时保存 debug 文件，无论是否有 Token 信息，方便调试
+	if len(sp.partialData) > 0 {
+		fullLines := strings.Split(string(sp.partialData), "\n")
+		utils.WriteStreamDebugResponse(sp.requestID, sp.endpoint, fullLines, sp.bytesProcessed)
+	} else if len(sp.debugLines) > 0 {
+		utils.WriteStreamDebugResponse(sp.requestID, sp.endpoint, sp.debugLines, sp.bytesProcessed)
+	}
+
 	// 处理Token信息
 	var partialTokenUsage *tracking.TokenUsage
 	if finalUsage != nil {

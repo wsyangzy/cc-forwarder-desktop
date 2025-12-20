@@ -2,9 +2,11 @@ package utils
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"sync"
 	"time"
 
@@ -16,6 +18,9 @@ import (
 var (
 	debugConfig     *config.TokenDebugConfig
 	debugConfigOnce sync.Once
+	// 清理节流控制：每 24 小时最多执行一次清理
+	lastCleanupTime time.Time
+	cleanupMutex    sync.Mutex
 )
 
 // SetDebugConfig 设置调试配置（应该在程序启动时调用）
@@ -47,6 +52,91 @@ func getDebugLogDir() string {
 	}
 	// 默认：使用应用数据目录下的日志目录
 	return GetLogDir()
+}
+
+// cleanupDebugFiles 清理过期的 debug 文件
+// 根据配置的 MaxFiles 和 AutoCleanupDays 执行清理
+// 使用节流机制，每 24 小时最多执行一次
+func cleanupDebugFiles() {
+	// 节流：每 24 小时最多执行一次清理
+	cleanupMutex.Lock()
+	if time.Since(lastCleanupTime) < 24*time.Hour {
+		cleanupMutex.Unlock()
+		return
+	}
+	lastCleanupTime = time.Now()
+	cleanupMutex.Unlock()
+
+	if debugConfig == nil {
+		return
+	}
+
+	// 如果两个清理条件都未配置，直接返回
+	if debugConfig.MaxFiles <= 0 && debugConfig.AutoCleanupDays <= 0 {
+		return
+	}
+
+	logDir := getDebugLogDir()
+
+	// 获取所有 .debug 文件
+	files, err := filepath.Glob(filepath.Join(logDir, "*.debug"))
+	if err != nil || len(files) == 0 {
+		return
+	}
+
+	// 获取文件信息并排序（按修改时间，最旧的在前）
+	type fileInfo struct {
+		path    string
+		modTime time.Time
+	}
+	var fileInfos []fileInfo
+	for _, f := range files {
+		info, err := os.Stat(f)
+		if err != nil {
+			continue
+		}
+		fileInfos = append(fileInfos, fileInfo{path: f, modTime: info.ModTime()})
+	}
+
+	if len(fileInfos) == 0 {
+		return
+	}
+
+	sort.Slice(fileInfos, func(i, j int) bool {
+		return fileInfos[i].modTime.Before(fileInfos[j].modTime)
+	})
+
+	deletedCount := 0
+
+	// 1. 按天数清理：删除 N 天前的文件
+	if debugConfig.AutoCleanupDays > 0 {
+		cutoff := time.Now().AddDate(0, 0, -debugConfig.AutoCleanupDays)
+		newFileInfos := make([]fileInfo, 0, len(fileInfos))
+		for _, f := range fileInfos {
+			if f.modTime.Before(cutoff) {
+				if err := os.Remove(f.path); err == nil {
+					deletedCount++
+				}
+			} else {
+				newFileInfos = append(newFileInfos, f)
+			}
+		}
+		fileInfos = newFileInfos
+	}
+
+	// 2. 按数量清理：保留最新的 MaxFiles 个文件
+	if debugConfig.MaxFiles > 0 && len(fileInfos) > debugConfig.MaxFiles {
+		toDelete := len(fileInfos) - debugConfig.MaxFiles
+		for i := 0; i < toDelete; i++ {
+			if err := os.Remove(fileInfos[i].path); err == nil {
+				deletedCount++
+			}
+		}
+	}
+
+	if deletedCount > 0 {
+		slog.Debug(fmt.Sprintf("🧹 [Debug清理] 清理了 %d 个过期调试文件", deletedCount))
+	}
 }
 
 // WriteTokenDebugResponse 异步保存Token解析失败的响应数据用于调试
@@ -90,6 +180,9 @@ func WriteTokenDebugResponse(requestID, endpoint, responseBody string) {
 		defer file.Close()
 
 		file.WriteString(debugContent)
+
+		// 🧹 触发清理（节流控制，每 24 小时最多执行一次）
+		cleanupDebugFiles()
 	}()
 }
 
@@ -140,6 +233,9 @@ func WriteStreamDebugResponse(requestID, endpoint string, streamData []string, b
 		defer file.Close()
 
 		file.WriteString(debugContent)
+
+		// 🧹 触发清理（节流控制，每 24 小时最多执行一次）
+		cleanupDebugFiles()
 	}()
 }
 
