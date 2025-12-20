@@ -3,11 +3,15 @@
 // 2025-11-28 (Updated 2025-12-06 for v5.0 SQLite Storage)
 // ============================================
 
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   Activity,
   RefreshCw,
+  Plus,
+  Pencil,
+  Trash2,
   Database,
+  AlertTriangle,
   Server,
   Copy,
   ArrowRightLeft,
@@ -21,7 +25,8 @@ import {
   ChevronUp,
   Pause,
   Play,
-  Power
+  Power,
+  Globe
 } from 'lucide-react';
 import {
   Button,
@@ -31,10 +36,7 @@ import {
 import useEndpointsData from '@hooks/useEndpointsData.js';
 import {
   EndpointForm,
-  EndpointRow,
-  ChannelRow,
-  DeleteConfirmDialog,
-  groupEndpointsByChannel
+  DeleteConfirmDialog
 } from './components';
 import {
   getEndpointStorageStatus,
@@ -57,73 +59,6 @@ import {
   subscribeToEvent
 } from '@utils/wailsApi.js';
 
-// ============================================
-// 存储模式指示器
-// ============================================
-
-const StorageModeIndicator = ({ storageStatus }) => {
-  if (!storageStatus) return null;
-
-  const isSqlite = storageStatus.storageType === 'sqlite';
-
-  return (
-    <div className={`
-      flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium
-      ${isSqlite
-        ? 'bg-indigo-50 text-indigo-700 border border-indigo-200'
-        : 'bg-slate-50 text-slate-600 border border-slate-200'
-      }
-    `}>
-      {isSqlite ? <Database size={14} /> : <FileText size={14} />}
-      {isSqlite ? 'SQLite 存储模式' : 'YAML 配置模式'}
-      {isSqlite && (
-        <span className="text-indigo-500">
-          ({storageStatus.enabledCount}/{storageStatus.totalCount} 启用)
-        </span>
-      )}
-    </div>
-  );
-};
-
-// ============================================
-// 删除确认对话框
-// ============================================
-
-const DeleteConfirmDialog = ({ endpoint, onConfirm, onCancel, loading }) => (
-  <div className="fixed inset-0 bg-black/50 flex items-start justify-center z-50 animate-fade-in pt-[20vh]">
-    <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6">
-      <div className="flex items-center gap-3 mb-4">
-        <div className="p-3 bg-rose-100 rounded-full">
-          <AlertTriangle className="text-rose-600" size={24} />
-        </div>
-        <div>
-          <h3 className="text-lg font-semibold text-slate-900">确认删除</h3>
-          <p className="text-sm text-slate-500">此操作不可撤销</p>
-        </div>
-      </div>
-
-      <p className="text-slate-700 mb-6">
-        确定要删除端点 <span className="font-semibold">"{endpoint?.name}"</span> 吗？
-        删除后将无法恢复。
-      </p>
-
-      <div className="flex justify-end gap-3">
-        <Button variant="ghost" onClick={onCancel} disabled={loading}>
-          取消
-        </Button>
-        <Button
-          variant="danger"
-          icon={Trash2}
-          onClick={onConfirm}
-          loading={loading}
-        >
-          确认删除
-        </Button>
-      </div>
-    </div>
-  </div>
-);
-
 const DeleteChannelConfirmDialog = ({ channelName, endpointCount = 0, onConfirm, onCancel, loading }) => {
   const confirmDisabled = loading;
 
@@ -141,7 +76,7 @@ const DeleteChannelConfirmDialog = ({ channelName, endpointCount = 0, onConfirm,
         </div>
 
         <p className="text-slate-700 mb-4">
-          确定要删除渠道 <span className="font-semibold">"{channelName}"</span> 吗？
+          确定要删除渠道 <span className="font-semibold">“{channelName}”</span> 吗？
         </p>
 
         {endpointCount > 0 && (
@@ -662,23 +597,13 @@ const CreateChannelModal = ({
   mode = 'create',
   initialValue = null
 }) => {
-  const [name, setName] = useState('');
-  const [website, setWebsite] = useState('');
-  const [priority, setPriority] = useState('1');
+  const isEdit = mode === 'edit';
+  const [name, setName] = useState(() => (isEdit ? (initialValue?.name || '') : ''));
+  const [website, setWebsite] = useState(() => (isEdit ? (initialValue?.website || '') : ''));
+  const [priority, setPriority] = useState(() => String(isEdit ? (initialValue?.priority || 1) : 1));
   const [error, setError] = useState('');
 
-  useEffect(() => {
-    if (!open) return;
-    const isEdit = mode === 'edit';
-    setName(isEdit ? (initialValue?.name || '') : '');
-    setWebsite(isEdit ? (initialValue?.website || '') : '');
-    setPriority(String(isEdit ? (initialValue?.priority || 1) : 1));
-    setError('');
-  }, [initialValue, mode, open]);
-
   if (!open) return null;
-
-  const isEdit = mode === 'edit';
 
   return (
     <div className="fixed inset-0 bg-slate-900/30 backdrop-blur-sm flex items-center justify-center p-4 z-[60]">
@@ -1341,7 +1266,7 @@ const EndpointsPage = () => {
       if (byCreated !== 0) return byCreated;
       return (a.name || '').localeCompare(b.name || '');
     });
-  }, [activeChannel, channelOptions, channelsMeta, displayEndpoints, groupInfoMap, isSqliteMode]);
+  }, [activeChannel, channelOptions, channelsMeta, displayEndpoints, groupInfoMap]);
 
   // 计算统计数据
   const displayStats = isSqliteMode
@@ -1356,48 +1281,6 @@ const EndpointsPage = () => {
           : 0
       }
     : { ...stats, cooldown: 0 };
-
-  // 按渠道分组
-  const groupedEndpoints = groupEndpointsByChannel(displayEndpoints);
-
-  // 切换渠道展开状态
-  const toggleChannel = (channel) => {
-    setExpandedChannels(prev => {
-      const next = new Set(prev);
-      if (next.has(channel)) {
-        next.delete(channel);
-      } else {
-        next.add(channel);
-      }
-      return next;
-    });
-  };
-
-  // 全部展开/折叠
-  const toggleAllChannels = () => {
-    const allChannels = new Set(displayEndpoints.map(e => e.channel || e.group || '未分组'));
-    if (expandedChannels.size === allChannels.size) {
-      // 当前全部展开，则全部折叠
-      setExpandedChannels(new Set());
-    } else {
-      // 否则全部展开
-      setExpandedChannels(allChannels);
-    }
-  };
-
-  // 判断是否全部展开
-  const isAllExpanded = () => {
-    const allChannels = new Set(displayEndpoints.map(e => e.channel || e.group || '未分组'));
-    return expandedChannels.size === allChannels.size;
-  };
-
-  // 首次加载时默认展开所有渠道
-  useEffect(() => {
-    if (displayEndpoints.length > 0 && expandedChannels.size === 0) {
-      const channels = new Set(displayEndpoints.map(e => e.channel || e.group || '未分组'));
-      setExpandedChannels(channels);
-    }
-  }, [displayEndpoints]);
 
   // ============================================
   // CRUD 操作处理
@@ -1782,26 +1665,30 @@ const EndpointsPage = () => {
         />
       )}
 
-      <CreateChannelModal
-        open={showCreateChannel && isSqliteMode}
-        loading={channelFormLoading}
-        serverError={createChannelError}
-        onClose={() => setShowCreateChannel(false)}
-        onSubmit={handleCreateChannel}
-      />
+      {showCreateChannel && isSqliteMode && (
+        <CreateChannelModal
+          open
+          loading={channelFormLoading}
+          serverError={createChannelError}
+          onClose={() => setShowCreateChannel(false)}
+          onSubmit={handleCreateChannel}
+        />
+      )}
 
-      <CreateChannelModal
-        open={showEditChannel && isSqliteMode}
-        loading={channelFormLoading}
-        serverError={editChannelError}
-        mode="edit"
-        initialValue={editingChannel}
-        onClose={() => {
-          setShowEditChannel(false);
-          setEditingChannel(null);
-        }}
-        onSubmit={handleUpdateChannel}
-      />
+      {showEditChannel && isSqliteMode && (
+        <CreateChannelModal
+          open
+          loading={channelFormLoading}
+          serverError={editChannelError}
+          mode="edit"
+          initialValue={editingChannel}
+          onClose={() => {
+            setShowEditChannel(false);
+            setEditingChannel(null);
+          }}
+          onSubmit={handleUpdateChannel}
+        />
+      )}
 
       {/* 删除确认弹窗 */}
       {deleteTarget && (

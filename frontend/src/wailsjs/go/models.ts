@@ -213,6 +213,7 @@ export namespace main {
 	    input_cost_multiplier: number;
 	    output_cost_multiplier: number;
 	    cache_creation_cost_multiplier: number;
+	    cache_creation_cost_multiplier_1h: number;
 	    cache_read_cost_multiplier: number;
 	
 	    static createFrom(source: any = {}) {
@@ -236,6 +237,7 @@ export namespace main {
 	        this.input_cost_multiplier = source["input_cost_multiplier"];
 	        this.output_cost_multiplier = source["output_cost_multiplier"];
 	        this.cache_creation_cost_multiplier = source["cache_creation_cost_multiplier"];
+	        this.cache_creation_cost_multiplier_1h = source["cache_creation_cost_multiplier_1h"];
 	        this.cache_read_cost_multiplier = source["cache_read_cost_multiplier"];
 	    }
 	}
