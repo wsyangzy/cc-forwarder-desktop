@@ -554,9 +554,14 @@ func (h *Handler) detectSSERequest(r *http.Request, bodyBytes []byte) bool {
 // UpdateConfig updates the handler configuration
 func (h *Handler) UpdateConfig(cfg *config.Config) {
 	h.config = cfg
-	
+
 	// Update retry handler with new config
 	h.retryHandler.UpdateConfig(cfg)
+
+	// 🔧 [热更新] Update suspension manager with new config
+	if h.sharedSuspensionManager != nil {
+		h.sharedSuspensionManager.UpdateConfig(cfg)
+	}
 }
 
 // noOpFlusher 是一个不执行实际flush操作的flusher实现

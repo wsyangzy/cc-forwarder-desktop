@@ -5,6 +5,17 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 项目遵循 [语义化版本控制](https://semver.org/lang/zh-CN/)。
 
+## [5.2.2] - 2025-12-20
+
+### 🐛 Bug 修复 (Bug Fixes)
+
+- **SuspensionManager 配置热更新**: 修复配置热更新时 SuspensionManager 未同步更新的问题
+  - 在 `SuspensionManager` 接口中添加 `UpdateConfig` 方法
+  - `Handler.UpdateConfig` 现在会正确调用 `sharedSuspensionManager.UpdateConfig`
+  - 挂起相关配置（超时、最大挂起数等）修改后无需重启即可生效
+
+---
+
 ## [5.2.1] - 2025-12-20
 
 ### 🔧 改进 (Improvements)
