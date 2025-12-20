@@ -256,22 +256,25 @@ func (a *App) DeleteModelPricing(modelName string) error {
 
 // SetDefaultModelPricing 设置默认模型定价
 func (a *App) SetDefaultModelPricing(modelName string) error {
+	a.ensureModelPricingService()
 	a.mu.RLock()
-	defer a.mu.RUnlock()
+	modelPricingService := a.modelPricingService
+	logger := a.logger
+	a.mu.RUnlock()
 
-	if a.modelPricingService == nil {
-		return fmt.Errorf("模型定价服务未启用")
+	if modelPricingService == nil {
+		return fmt.Errorf("模型定价服务未就绪，请稍后重试")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	if err := a.modelPricingService.SetDefaultPricing(ctx, modelName); err != nil {
+	if err := modelPricingService.SetDefaultPricing(ctx, modelName); err != nil {
 		return fmt.Errorf("设置默认定价失败: %w", err)
 	}
 
-	if a.logger != nil {
-		a.logger.Info("✅ 已设置默认模型定价", "model", modelName)
+	if logger != nil {
+		logger.Info("✅ 已设置默认模型定价", "model", modelName)
 	}
 
 	return nil

@@ -1024,6 +1024,11 @@ const EndpointsPage = () => {
   const [detailTarget, setDetailTarget] = useState(null);
   const [detailOpen, setDetailOpen] = useState(false);
 
+  const storageLoadSeqRef = useRef(0);
+  const groupsLoadSeqRef = useRef(0);
+  const channelsMetaLoadSeqRef = useRef(0);
+  const configLoadSeqRef = useRef(0);
+
   const openEndpointDetail = useCallback((endpoint) => {
     setDetailTarget(endpoint);
     setDetailOpen(true);
@@ -1036,22 +1041,28 @@ const EndpointsPage = () => {
 
   // 加载存储状态
   const loadStorageStatus = useCallback(async () => {
+    const seq = ++storageLoadSeqRef.current;
     setStorageLoading(true);
     try {
       const status = await getEndpointStorageStatus();
+      if (seq !== storageLoadSeqRef.current) return;
       setStorageStatus(status);
 
       // 如果是 SQLite 模式，加载存储的端点
       if (status.storageType === 'sqlite' && status.enabled) {
         const records = await getEndpointRecords();
+        if (seq !== storageLoadSeqRef.current) return;
         setStorageEndpoints(records);
       }
     } catch (err) {
       console.error('获取存储状态失败:', err);
+      if (seq !== storageLoadSeqRef.current) return;
       // 默认使用 YAML 模式
       setStorageStatus({ enabled: false, storageType: 'yaml' });
     } finally {
-      setStorageLoading(false);
+      if (seq === storageLoadSeqRef.current) {
+        setStorageLoading(false);
+      }
     }
   }, []);
 
@@ -1062,23 +1073,30 @@ const EndpointsPage = () => {
 
   // 加载渠道（组）状态
   const loadGroups = useCallback(async () => {
+    const seq = ++groupsLoadSeqRef.current;
     try {
       const data = await getGroupsRaw();
+      if (seq !== groupsLoadSeqRef.current) return;
       setGroups(Array.isArray(data) ? data : []);
     } catch (err) {
       console.error('获取渠道状态失败:', err);
+      if (seq !== groupsLoadSeqRef.current) return;
       setGroups([]);
     }
   }, []);
 
   const loadChannelsMeta = useCallback(async () => {
+    const seq = ++channelsMetaLoadSeqRef.current;
     const sqliteEnabled = storageStatus?.storageType === 'sqlite' && storageStatus?.enabled;
     if (!sqliteEnabled) {
-      setChannelsMeta([]);
+      if (seq === channelsMetaLoadSeqRef.current) {
+        setChannelsMeta([]);
+      }
       return;
     }
     try {
       const list = await getChannels();
+      if (seq !== channelsMetaLoadSeqRef.current) return;
       setChannelsMeta(Array.isArray(list) ? list : []);
     } catch (err) {
       console.error('获取渠道列表失败:', err);
@@ -1087,11 +1105,14 @@ const EndpointsPage = () => {
   }, [storageStatus]);
 
   const loadConfig = useCallback(async () => {
+    const seq = ++configLoadSeqRef.current;
     try {
       const cfg = await getConfig();
+      if (seq !== configLoadSeqRef.current) return;
       setChannelFailoverEnabled(cfg?.failover_enabled !== false);
     } catch (err) {
       console.error('获取配置失败:', err);
+      if (seq !== configLoadSeqRef.current) return;
       setChannelFailoverEnabled(true);
     }
   }, []);

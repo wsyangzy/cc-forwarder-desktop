@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -745,8 +746,8 @@ func (a *App) setupStoreDB() {
 		return
 	}
 
-	// 使用较短 busy_timeout：快速失败并给出明确错误，不让前端长时间挂起。
-	dsn := dbPath + "?_journal_mode=WAL&_synchronous=NORMAL&_cache_size=10000&_foreign_keys=1&_busy_timeout=2000"
+	// 使用适中的 busy_timeout：降低“瞬时锁争用”带来的偶发失败，同时由上层 ctx 超时控制整体等待。
+	dsn := dbPath + "?_journal_mode=WAL&_synchronous=NORMAL&_cache_size=10000&_foreign_keys=1&_busy_timeout=10000"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		a.logger.Warn("⚠️ 初始化管理数据库连接失败", "error", err)
@@ -783,26 +784,61 @@ func (a *App) migrateLegacyDatabaseIfNeeded() {
 		return
 	}
 
-	// 新库已存在：无需迁移
-	if _, err := os.Stat(defaultNew); err == nil {
+	legacyCandidates := []string{defaultOld}
+
+	// 兼容旧版本可能使用的相对路径（例如安装目录/data/usage.db 或运行目录/data/usage.db）
+	if exe, err := os.Executable(); err == nil {
+		exeDir := filepath.Dir(exe)
+		legacyCandidates = append(legacyCandidates, filepath.Join(exeDir, "data", "usage.db"))
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		legacyCandidates = append(legacyCandidates, filepath.Join(cwd, "data", "usage.db"))
+	}
+
+	legacyPath := ""
+	for _, p := range legacyCandidates {
+		if p == "" {
+			continue
+		}
+		if _, err := os.Stat(p); err == nil {
+			legacyPath = p
+			break
+		}
+	}
+	if legacyPath == "" {
 		return
 	}
 
-	// 旧库不存在：无需迁移
-	if _, err := os.Stat(defaultOld); err != nil {
+	// 场景1：新库不存在 -> 直接复制（最简单、最稳定）
+	if _, err := os.Stat(defaultNew); err != nil {
+		if err := copyFile(legacyPath, defaultNew); err != nil {
+			a.logger.Warn("⚠️ 旧数据迁移失败，将使用新的空数据库（可在关闭旧版本后重启再迁移）",
+				"old", legacyPath, "new", defaultNew, "error", err)
+			a.emitNotification("warning", "旧数据迁移失败", "无法复制旧数据库（可能被旧版本占用），将使用新的空数据库；关闭旧版本后重启可再次尝试迁移。")
+			return
+		}
+
+		a.logger.Info("✅ 旧数据迁移完成", "old", legacyPath, "new", defaultNew)
+		a.emitNotification("success", "旧数据已迁移", "已将旧版本数据库迁移到新数据库文件（避免新旧版本冲突）。")
 		return
 	}
 
-	// 尝试复制旧库到新库
-	if err := copyFile(defaultOld, defaultNew); err != nil {
-		a.logger.Warn("⚠️ 旧数据迁移失败，将使用新的空数据库（可在关闭旧版本后重启再迁移）",
-			"old", defaultOld, "new", defaultNew, "error", err)
-		a.emitNotification("warning", "旧数据迁移失败", "无法复制旧数据库（可能被旧版本占用），将使用新的空数据库；关闭旧版本后重启可再次尝试迁移。")
+	// 场景2：新库已存在，但用户反馈“请求追踪历史丢失”：
+	// 多见于新库已被创建（空库）导致复制迁移跳过。此时只导入 request_logs/usage_summary，避免覆盖新库中的配置类表。
+	newReqCount, _ := countTableRows(defaultNew, "request_logs")
+	oldReqCount, _ := countTableRows(legacyPath, "request_logs")
+	if newReqCount > 0 || oldReqCount <= 0 {
 		return
 	}
 
-	a.logger.Info("✅ 旧数据迁移完成", "old", defaultOld, "new", defaultNew)
-	a.emitNotification("success", "旧数据已迁移", "已将旧版本数据库迁移到新数据库文件（避免新旧版本冲突）。")
+	if err := importTrackingTables(defaultNew, legacyPath); err != nil {
+		a.logger.Warn("⚠️ 旧请求记录导入失败", "old", legacyPath, "new", defaultNew, "error", err)
+		a.emitNotification("warning", "旧请求记录导入失败", "检测到旧数据库存在，但导入请求追踪记录失败；请稍后重试或联系开发者。")
+		return
+	}
+
+	a.logger.Info("✅ 已导入旧请求记录", "old", legacyPath, "new", defaultNew)
+	a.emitNotification("success", "旧请求记录已导入", "已从旧数据库导入请求追踪历史到新数据库（不会覆盖渠道/端点等配置）。")
 }
 
 func copyFile(src, dst string) error {
@@ -824,6 +860,162 @@ func copyFile(src, dst string) error {
 		return err
 	}
 	return out.Sync()
+}
+
+func countTableRows(dbPath, table string) (int64, error) {
+	if dbPath == "" || table == "" {
+		return 0, nil
+	}
+	dsn := dbPath + "?_busy_timeout=2000"
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return 0, err
+	}
+	defer db.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	// table 名仅允许字母数字下划线，避免拼接 SQL 注入
+	for _, r := range table {
+		if !(r == '_' || (r >= '0' && r <= '9') || (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z')) {
+			return 0, fmt.Errorf("invalid table name: %s", table)
+		}
+	}
+
+	var count int64
+	row := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+table)
+	if err := row.Scan(&count); err != nil {
+		// 例如表不存在：当作 0
+		return 0, nil
+	}
+	return count, nil
+}
+
+func importTrackingTables(dstDBPath, legacyDBPath string) error {
+	if dstDBPath == "" || legacyDBPath == "" {
+		return nil
+	}
+
+	dsn := dstDBPath + "?_journal_mode=WAL&_synchronous=NORMAL&_foreign_keys=1&_busy_timeout=10000"
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	legacyEscaped := strings.ReplaceAll(legacyDBPath, "'", "''")
+	if _, err := db.ExecContext(ctx, "ATTACH DATABASE '"+legacyEscaped+"' AS legacy"); err != nil {
+		return fmt.Errorf("attach legacy database failed: %w", err)
+	}
+	defer func() {
+		_, _ = db.ExecContext(context.Background(), "DETACH DATABASE legacy")
+	}()
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// 仅导入追踪相关表，避免覆盖配置类数据
+	for _, table := range []string{"request_logs", "usage_summary"} {
+		cols, err := commonTableColumns(ctx, tx, table)
+		if err != nil {
+			continue
+		}
+		cols = filterOut(cols, "id")
+		if len(cols) == 0 {
+			continue
+		}
+
+		colList := make([]string, 0, len(cols))
+		for _, c := range cols {
+			colList = append(colList, `"`+c+`"`)
+		}
+		colCSV := strings.Join(colList, ", ")
+
+		sqlStmt := fmt.Sprintf(
+			"INSERT OR IGNORE INTO %s (%s) SELECT %s FROM legacy.%s",
+			table, colCSV, colCSV, table,
+		)
+		if _, err := tx.ExecContext(ctx, sqlStmt); err != nil {
+			continue
+		}
+	}
+
+	return tx.Commit()
+}
+
+func commonTableColumns(ctx context.Context, q interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}, table string) ([]string, error) {
+	mainCols, err := tableColumns(ctx, q, "main", table)
+	if err != nil {
+		return nil, err
+	}
+	legacyCols, err := tableColumns(ctx, q, "legacy", table)
+	if err != nil {
+		return nil, err
+	}
+
+	legacySet := make(map[string]struct{}, len(legacyCols))
+	for _, c := range legacyCols {
+		legacySet[c] = struct{}{}
+	}
+	common := make([]string, 0, len(mainCols))
+	for _, c := range mainCols {
+		if _, ok := legacySet[c]; ok {
+			common = append(common, c)
+		}
+	}
+	return common, nil
+}
+
+func tableColumns(ctx context.Context, q interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}, schema, table string) ([]string, error) {
+	rows, err := q.QueryContext(ctx, "PRAGMA "+schema+".table_info("+table+")")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var cols []string
+	for rows.Next() {
+		var cid int
+		var name string
+		var typ string
+		var notnull int
+		var dflt sql.NullString
+		var pk int
+		if err := rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk); err != nil {
+			continue
+		}
+		if name != "" {
+			cols = append(cols, name)
+		}
+	}
+	return cols, nil
+}
+
+func filterOut(cols []string, disallow string) []string {
+	if disallow == "" {
+		return cols
+	}
+	out := make([]string, 0, len(cols))
+	for _, c := range cols {
+		if c == disallow {
+			continue
+		}
+		out = append(out, c)
+	}
+	return out
 }
 
 // setupProxyHandler 设置代理处理器

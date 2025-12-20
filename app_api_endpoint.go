@@ -30,14 +30,15 @@ type EndpointInfo struct {
 // GetEndpoints 获取所有端点状态
 func (a *App) GetEndpoints() []EndpointInfo {
 	a.mu.RLock()
-	defer a.mu.RUnlock()
+	manager := a.endpointManager
+	a.mu.RUnlock()
 
-	if a.endpointManager == nil {
+	if manager == nil {
 		return []EndpointInfo{}
 	}
 
-	endpoints := a.endpointManager.GetAllEndpoints()
-	gm := a.endpointManager.GetGroupManager()
+	endpoints := manager.GetAllEndpoints()
+	gm := manager.GetGroupManager()
 	result := make([]EndpointInfo, 0, len(endpoints))
 
 	// 预先构建组状态映射
@@ -85,13 +86,14 @@ func (a *App) GetEndpoints() []EndpointInfo {
 // SetEndpointPriority 设置端点优先级
 func (a *App) SetEndpointPriority(name string, priority int) error {
 	a.mu.RLock()
-	defer a.mu.RUnlock()
+	manager := a.endpointManager
+	a.mu.RUnlock()
 
-	if a.endpointManager == nil {
+	if manager == nil {
 		return fmt.Errorf("端点管理器未初始化")
 	}
 
-	return a.endpointManager.UpdateEndpointPriority(name, priority)
+	return manager.UpdateEndpointPriority(name, priority)
 }
 
 // TriggerHealthCheck 手动触发健康检查
@@ -117,11 +119,11 @@ func (a *App) TriggerHealthCheck(name string) error {
 
 // BatchHealthCheckResult 批量健康检查结果
 type BatchHealthCheckResult struct {
-	Success      bool   `json:"success"`
-	Message      string `json:"message"`
-	Total        int    `json:"total"`
-	HealthyCount int    `json:"healthy_count"`
-	UnhealthyCount int  `json:"unhealthy_count"`
+	Success        bool   `json:"success"`
+	Message        string `json:"message"`
+	Total          int    `json:"total"`
+	HealthyCount   int    `json:"healthy_count"`
+	UnhealthyCount int    `json:"unhealthy_count"`
 }
 
 // BatchHealthCheckAll 批量检查所有端点的健康状态
@@ -189,20 +191,21 @@ type KeysOverviewResult struct {
 // GetKeysOverview 获取所有端点的 Key 概览
 func (a *App) GetKeysOverview() KeysOverviewResult {
 	a.mu.RLock()
-	defer a.mu.RUnlock()
+	manager := a.endpointManager
+	a.mu.RUnlock()
 
 	result := KeysOverviewResult{
 		Endpoints: make([]EndpointKeysInfo, 0),
 		Timestamp: time.Now().Format("2006-01-02 15:04:05"),
 	}
 
-	if a.endpointManager == nil {
+	if manager == nil {
 		return result
 	}
 
-	endpoints := a.endpointManager.GetAllEndpoints()
+	endpoints := manager.GetAllEndpoints()
 	for _, ep := range endpoints {
-		keysInfo := a.endpointManager.GetEndpointKeysInfo(ep.Config.Name)
+		keysInfo := manager.GetEndpointKeysInfo(ep.Config.Name)
 		if keysInfo == nil {
 			continue
 		}
@@ -280,7 +283,9 @@ type SwitchKeyResult struct {
 // keyType: "token" 或 "api_key"
 func (a *App) SwitchKey(endpointName, keyType string, index int) (SwitchKeyResult, error) {
 	a.mu.RLock()
-	defer a.mu.RUnlock()
+	manager := a.endpointManager
+	logger := a.logger
+	a.mu.RUnlock()
 
 	result := SwitchKeyResult{
 		Endpoint:  endpointName,
@@ -289,28 +294,28 @@ func (a *App) SwitchKey(endpointName, keyType string, index int) (SwitchKeyResul
 		Timestamp: time.Now().Format("2006-01-02 15:04:05"),
 	}
 
-	if a.endpointManager == nil {
+	if manager == nil {
 		return result, fmt.Errorf("端点管理器未初始化")
 	}
 
 	var err error
 	switch keyType {
 	case "token":
-		err = a.endpointManager.SwitchEndpointToken(endpointName, index)
+		err = manager.SwitchEndpointToken(endpointName, index)
 		if err == nil {
 			result.Success = true
 			result.Message = "Token 切换成功"
-			if a.logger != nil {
-				a.logger.Info("🔑 Token已通过桌面应用切换", "endpoint", endpointName, "index", index)
+			if logger != nil {
+				logger.Info("🔑 Token已通过桌面应用切换", "endpoint", endpointName, "index", index)
 			}
 		}
 	case "api_key":
-		err = a.endpointManager.SwitchEndpointApiKey(endpointName, index)
+		err = manager.SwitchEndpointApiKey(endpointName, index)
 		if err == nil {
 			result.Success = true
 			result.Message = "API Key 切换成功"
-			if a.logger != nil {
-				a.logger.Info("🔑 API Key已通过桌面应用切换", "endpoint", endpointName, "index", index)
+			if logger != nil {
+				logger.Info("🔑 API Key已通过桌面应用切换", "endpoint", endpointName, "index", index)
 			}
 		}
 	default:

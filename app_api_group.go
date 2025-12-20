@@ -17,7 +17,7 @@ import (
 // GroupInfo 组信息
 type GroupInfo struct {
 	Name             string `json:"name"`
-	Channel          string `json:"channel"`           // v5.0: 渠道名称（从端点配置获取）
+	Channel          string `json:"channel"` // v5.0: 渠道名称（从端点配置获取）
 	Active           bool   `json:"active"`
 	Paused           bool   `json:"paused"`
 	Priority         int    `json:"priority"`
@@ -29,13 +29,14 @@ type GroupInfo struct {
 // GetGroups 获取所有组状态
 func (a *App) GetGroups() []GroupInfo {
 	a.mu.RLock()
-	defer a.mu.RUnlock()
+	manager := a.endpointManager
+	a.mu.RUnlock()
 
-	if a.endpointManager == nil {
+	if manager == nil {
 		return []GroupInfo{}
 	}
 
-	gm := a.endpointManager.GetGroupManager()
+	gm := manager.GetGroupManager()
 	if gm == nil {
 		return []GroupInfo{}
 	}
@@ -79,51 +80,60 @@ func (a *App) GetGroups() []GroupInfo {
 // v6.0: 组名 = 渠道(channel)（SQLite 模式）；未配置 channel 时回退为端点名（YAML 模式兼容）
 func (a *App) ActivateGroup(name string) error {
 	a.mu.RLock()
-	defer a.mu.RUnlock()
+	manager := a.endpointManager
+	endpointService := a.endpointService
+	logger := a.logger
+	a.mu.RUnlock()
 
-	if a.endpointManager == nil {
+	if manager == nil {
 		return fmt.Errorf("端点管理器未初始化")
 	}
 
 	// v5.0+: 如果有 endpointService，同步到数据库
-	if a.endpointService != nil {
+	if endpointService != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
 		// SQLite：激活渠道（互斥）
-		if err := a.endpointService.ActivateChannel(ctx, name); err != nil {
-			a.logger.Warn("激活渠道失败", "channel", name, "error", err)
+		if err := endpointService.ActivateChannel(ctx, name); err != nil {
+			if logger != nil {
+				logger.Warn("激活渠道失败", "channel", name, "error", err)
+			}
 		} else {
-			a.logger.Info("✅ 渠道已同步到数据库", "channel", name, "enabled", true)
+			if logger != nil {
+				logger.Info("✅ 渠道已同步到数据库", "channel", name, "enabled", true)
+			}
 			return nil
 		}
 	}
 
 	// 内存中激活组（兼容 YAML 模式）
-	return a.endpointManager.ManualActivateGroup(name)
+	return manager.ManualActivateGroup(name)
 }
 
 // PauseGroup 暂停指定组
 func (a *App) PauseGroup(name string) error {
 	a.mu.RLock()
-	defer a.mu.RUnlock()
+	manager := a.endpointManager
+	a.mu.RUnlock()
 
-	if a.endpointManager == nil {
+	if manager == nil {
 		return fmt.Errorf("端点管理器未初始化")
 	}
 
 	// 默认暂停 1 小时
-	return a.endpointManager.ManualPauseGroup(name, time.Hour)
+	return manager.ManualPauseGroup(name, time.Hour)
 }
 
 // ResumeGroup 恢复指定组
 func (a *App) ResumeGroup(name string) error {
 	a.mu.RLock()
-	defer a.mu.RUnlock()
+	manager := a.endpointManager
+	a.mu.RUnlock()
 
-	if a.endpointManager == nil {
+	if manager == nil {
 		return fmt.Errorf("端点管理器未初始化")
 	}
 
-	return a.endpointManager.ManualResumeGroup(name)
+	return manager.ManualResumeGroup(name)
 }

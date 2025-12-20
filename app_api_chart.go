@@ -28,19 +28,21 @@ type ChartDataPoint struct {
 // GetRequestTrendChart 获取请求趋势图表数据
 func (a *App) GetRequestTrendChart(minutes int) []ChartDataPoint {
 	a.mu.RLock()
-	defer a.mu.RUnlock()
+	monitoringMiddleware := a.monitoringMiddleware
+	logger := a.logger
+	a.mu.RUnlock()
 
-	if a.monitoringMiddleware == nil {
-		if a.logger != nil {
-			a.logger.Warn("GetRequestTrendChart: monitoringMiddleware is nil")
+	if monitoringMiddleware == nil {
+		if logger != nil {
+			logger.Warn("GetRequestTrendChart: monitoringMiddleware is nil")
 		}
 		return []ChartDataPoint{}
 	}
 
-	metrics := a.monitoringMiddleware.GetMetrics()
+	metrics := monitoringMiddleware.GetMetrics()
 	if metrics == nil {
-		if a.logger != nil {
-			a.logger.Warn("GetRequestTrendChart: metrics is nil")
+		if logger != nil {
+			logger.Warn("GetRequestTrendChart: metrics is nil")
 		}
 		return []ChartDataPoint{}
 	}
@@ -48,8 +50,8 @@ func (a *App) GetRequestTrendChart(minutes int) []ChartDataPoint {
 	// 直接在原始 *Metrics 上调用，而不是获取副本
 	requestHistory := metrics.GetChartDataForRequestHistory(minutes)
 
-	if a.logger != nil {
-		a.logger.Info("📊 GetRequestTrendChart",
+	if logger != nil {
+		logger.Info("📊 GetRequestTrendChart",
 			"minutes", minutes,
 			"history_points", len(requestHistory))
 	}
@@ -70,13 +72,14 @@ func (a *App) GetRequestTrendChart(minutes int) []ChartDataPoint {
 // GetResponseTimeChart 获取响应时间图表数据
 func (a *App) GetResponseTimeChart(minutes int) []ChartDataPoint {
 	a.mu.RLock()
-	defer a.mu.RUnlock()
+	monitoringMiddleware := a.monitoringMiddleware
+	a.mu.RUnlock()
 
-	if a.monitoringMiddleware == nil {
+	if monitoringMiddleware == nil {
 		return []ChartDataPoint{}
 	}
 
-	metrics := a.monitoringMiddleware.GetMetrics()
+	metrics := monitoringMiddleware.GetMetrics()
 	responseHistory := metrics.GetChartDataForResponseTime(minutes)
 
 	result := make([]ChartDataPoint, len(responseHistory))
@@ -95,14 +98,15 @@ func (a *App) GetResponseTimeChart(minutes int) []ChartDataPoint {
 // GetConnectionActivityChart 获取连接活动图表数据
 func (a *App) GetConnectionActivityChart(minutes int) []ChartDataPoint {
 	a.mu.RLock()
-	defer a.mu.RUnlock()
+	monitoringMiddleware := a.monitoringMiddleware
+	a.mu.RUnlock()
 
-	if a.monitoringMiddleware == nil {
+	if monitoringMiddleware == nil {
 		return []ChartDataPoint{}
 	}
 
 	// 连接活动图表使用请求历史数据
-	metrics := a.monitoringMiddleware.GetMetrics()
+	metrics := monitoringMiddleware.GetMetrics()
 	requestHistory := metrics.GetChartDataForRequestHistory(minutes)
 
 	result := make([]ChartDataPoint, len(requestHistory))
@@ -130,13 +134,14 @@ type EndpointHealthData struct {
 // GetEndpointHealthChart 获取端点健康状态图表数据
 func (a *App) GetEndpointHealthChart() EndpointHealthData {
 	a.mu.RLock()
-	defer a.mu.RUnlock()
+	endpointManager := a.endpointManager
+	a.mu.RUnlock()
 
-	if a.endpointManager == nil {
+	if endpointManager == nil {
 		return EndpointHealthData{}
 	}
 
-	endpoints := a.endpointManager.GetAllEndpoints()
+	endpoints := endpointManager.GetAllEndpoints()
 
 	healthyCount := 0
 	unhealthyCount := 0
@@ -170,9 +175,11 @@ type EndpointCostItem struct {
 // GetEndpointCosts 获取当日端点成本数据
 func (a *App) GetEndpointCosts() []EndpointCostItem {
 	a.mu.RLock()
-	defer a.mu.RUnlock()
+	usageTracker := a.usageTracker
+	logger := a.logger
+	a.mu.RUnlock()
 
-	if a.usageTracker == nil {
+	if usageTracker == nil {
 		return []EndpointCostItem{}
 	}
 
@@ -183,10 +190,10 @@ func (a *App) GetEndpointCosts() []EndpointCostItem {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	costs, err := a.usageTracker.GetEndpointCostsForDate(ctx, date)
+	costs, err := usageTracker.GetEndpointCostsForDate(ctx, date)
 	if err != nil {
-		if a.logger != nil {
-			a.logger.Error("获取端点成本数据失败", "error", err)
+		if logger != nil {
+			logger.Error("获取端点成本数据失败", "error", err)
 		}
 		return []EndpointCostItem{}
 	}

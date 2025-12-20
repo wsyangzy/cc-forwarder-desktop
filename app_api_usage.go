@@ -443,8 +443,7 @@ func (a *App) GetUsageStats(params UsageStatsQueryParams) (UsageStatsData, error
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		// 使用 QueryOptions 查询请求详情（热池+数据库双源查询）
-		// 支持完整筛选参数
+		// 使用聚合查询：热池 + 数据库双源统计（避免拉取海量明细导致 UI 卡顿）
 		opts := &tracking.QueryOptions{
 			StartDate:    &startTime,
 			EndDate:      &endTime,
@@ -453,63 +452,25 @@ func (a *App) GetUsageStats(params UsageStatsQueryParams) (UsageStatsData, error
 			EndpointName: params.Endpoint,
 			GroupName:    params.Group,
 			Status:       params.Status,
-			Limit:        100000, // 大 limit 获取所有记录
+			Limit:        0,
 			Offset:       0,
 		}
 
-		requests, _, err := usageTracker.QueryRequestDetailsWithHotPool(ctx, opts)
-		if err == nil && len(requests) > 0 {
-			// 有数据，计算统计
-			var totalRequests, successRequests, errorRequests int
-			var totalTokens int64
-			var totalCost float64
-			var totalDuration int64
-			var durationCount int
+		totals, err := usageTracker.QueryUsageStatsTotalsWithHotPool(ctx, opts)
+		if err == nil && totals != nil {
+			result.TotalRequests = int(totals.TotalRequests)
+			result.FailedCount = int(totals.FailedRequests)
+			result.TotalTokens = totals.TotalTokens
+			result.TotalCostUSD = totals.TotalCostUSD
+			result.AvgDurationMs = totals.AvgDurationMs()
 
-			for _, req := range requests {
-				totalRequests++
-
-				// 统计成功/失败（与原版 HTTP API 逻辑一致）
-				switch req.Status {
-				case "completed", "processing":
-					successRequests++
-				case "failed", "error", "auth_error", "rate_limited", "server_error", "network_error", "stream_error", "timeout":
-					errorRequests++
-				}
-
-				// 累计 Token 和成本
-				totalTokens += req.InputTokens + req.OutputTokens + req.CacheCreationTokens + req.CacheReadTokens
-				totalCost += req.TotalCostUSD
-
-				// 计算耗时
-				if req.DurationMs != nil && *req.DurationMs > 0 {
-					totalDuration += *req.DurationMs
-					durationCount++
-				}
+			if totals.TotalRequests > 0 {
+				result.SuccessRate = float64(totals.SuccessRequests) / float64(totals.TotalRequests) * 100
 			}
-
-			// 计算平均耗时
-			avgDuration := 0.0
-			if durationCount > 0 {
-				avgDuration = float64(totalDuration) / float64(durationCount)
-			}
-
-			// 计算成功率
-			successRate := 0.0
-			if totalRequests > 0 {
-				successRate = float64(successRequests) / float64(totalRequests) * 100
-			}
-
-			result.TotalRequests = totalRequests
-			result.SuccessRate = successRate
-			result.AvgDurationMs = avgDuration
-			result.TotalCostUSD = totalCost
-			result.TotalTokens = totalTokens
-			result.FailedCount = errorRequests
 
 			return result, nil
 		}
-		// 查询失败或无数据，继续使用运行时统计
+		// 查询失败时，继续使用运行时统计（降级方案）
 	}
 
 	// 从运行时 Metrics 获取统计（降级方案，或无 usageTracker 时）
@@ -572,13 +533,14 @@ type TokenUsageData struct {
 // GetTokenUsage 获取当前 Token 使用统计（运行时内存数据）
 func (a *App) GetTokenUsage() TokenUsageData {
 	a.mu.RLock()
-	defer a.mu.RUnlock()
+	monitoringMiddleware := a.monitoringMiddleware
+	a.mu.RUnlock()
 
-	if a.monitoringMiddleware == nil {
+	if monitoringMiddleware == nil {
 		return TokenUsageData{}
 	}
 
-	metrics := a.monitoringMiddleware.GetMetrics()
+	metrics := monitoringMiddleware.GetMetrics()
 	if metrics == nil {
 		return TokenUsageData{}
 	}

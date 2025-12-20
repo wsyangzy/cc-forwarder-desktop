@@ -23,43 +23,43 @@ type QueryOptions struct {
 
 // UsageSummary represents a summary of usage data
 type UsageSummary struct {
-	Date         string    `json:"date"`
-	ModelName    string    `json:"model_name"`
-	EndpointName string    `json:"endpoint_name"`
-	GroupName    string    `json:"group_name"`
-	RequestCount int       `json:"request_count"`
-	SuccessCount int       `json:"success_count"`
-	ErrorCount   int       `json:"error_count"`
-	
+	Date         string `json:"date"`
+	ModelName    string `json:"model_name"`
+	EndpointName string `json:"endpoint_name"`
+	GroupName    string `json:"group_name"`
+	RequestCount int    `json:"request_count"`
+	SuccessCount int    `json:"success_count"`
+	ErrorCount   int    `json:"error_count"`
+
 	TotalInputTokens         int64   `json:"total_input_tokens"`
 	TotalOutputTokens        int64   `json:"total_output_tokens"`
 	TotalCacheCreationTokens int64   `json:"total_cache_creation_tokens"`
 	TotalCacheReadTokens     int64   `json:"total_cache_read_tokens"`
-	TotalCostUSD            float64 `json:"total_cost_usd"`
-	
-	AvgDurationMs float64 `json:"avg_duration_ms"`
+	TotalCostUSD             float64 `json:"total_cost_usd"`
+
+	AvgDurationMs float64   `json:"avg_duration_ms"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 // RequestDetail represents a detailed request record
 type RequestDetail struct {
-	ID          int64      `json:"id"`
-	RequestID   string     `json:"request_id"`
-	ClientIP    string     `json:"client_ip"`
-	UserAgent   string     `json:"user_agent"`
-	Method      string     `json:"method"`
-	Path        string     `json:"path"`
+	ID        int64  `json:"id"`
+	RequestID string `json:"request_id"`
+	ClientIP  string `json:"client_ip"`
+	UserAgent string `json:"user_agent"`
+	Method    string `json:"method"`
+	Path      string `json:"path"`
 
-	StartTime   time.Time  `json:"start_time"`
-	EndTime     *time.Time `json:"end_time"`
-	DurationMs  *int64     `json:"duration_ms"`
+	StartTime  time.Time  `json:"start_time"`
+	EndTime    *time.Time `json:"end_time"`
+	DurationMs *int64     `json:"duration_ms"`
 
-	Channel      string    `json:"channel"`      // 渠道标签
-	EndpointName string    `json:"endpoint_name"`
-	GroupName    string    `json:"group_name"`
-	ModelName    string    `json:"model_name"`
-	IsStreaming  bool      `json:"is_streaming"` // 是否为流式请求
+	Channel      string `json:"channel"` // 渠道标签
+	EndpointName string `json:"endpoint_name"`
+	GroupName    string `json:"group_name"`
+	ModelName    string `json:"model_name"`
+	IsStreaming  bool   `json:"is_streaming"` // 是否为流式请求
 
 	Status         string `json:"status"`
 	HTTPStatusCode *int   `json:"http_status_code"`
@@ -96,19 +96,48 @@ type UsageStats struct {
 	TotalCost     float64 `json:"total_cost_usd"`
 }
 
+// UsageStatsTotals 表示用于快速统计展示的聚合数据（总览用）。
+// 与 UsageStats 不同：该结构提供“计数/累加值”，由调用方决定如何计算成功率、平均耗时等派生指标。
+type UsageStatsTotals struct {
+	TotalRequests   int64
+	SuccessRequests int64
+	FailedRequests  int64
+	TotalTokens     int64
+	TotalCostUSD    float64
+	DurationSumMs   int64
+	DurationCount   int64
+}
+
+func (t *UsageStatsTotals) add(other UsageStatsTotals) {
+	t.TotalRequests += other.TotalRequests
+	t.SuccessRequests += other.SuccessRequests
+	t.FailedRequests += other.FailedRequests
+	t.TotalTokens += other.TotalTokens
+	t.TotalCostUSD += other.TotalCostUSD
+	t.DurationSumMs += other.DurationSumMs
+	t.DurationCount += other.DurationCount
+}
+
+func (t UsageStatsTotals) AvgDurationMs() float64 {
+	if t.DurationCount <= 0 {
+		return 0
+	}
+	return float64(t.DurationSumMs) / float64(t.DurationCount)
+}
+
 // EndpointCostSummary represents cost summary data for an endpoint
 type EndpointCostSummary struct {
-	EndpointName   string  `json:"endpoint_name"`
-	GroupName      string  `json:"group_name"`
-	TotalTokens    int64   `json:"total_tokens"`
-	TotalCostUSD   float64 `json:"total_cost_usd"`
-	RequestCount   int     `json:"request_count"`
-	SuccessCount   int     `json:"success_count"`
+	EndpointName string  `json:"endpoint_name"`
+	GroupName    string  `json:"group_name"`
+	TotalTokens  int64   `json:"total_tokens"`
+	TotalCostUSD float64 `json:"total_cost_usd"`
+	RequestCount int     `json:"request_count"`
+	SuccessCount int     `json:"success_count"`
 
-	InputTokens         int64   `json:"input_tokens"`
-	OutputTokens        int64   `json:"output_tokens"`
-	CacheCreationTokens int64   `json:"cache_creation_tokens"`
-	CacheReadTokens     int64   `json:"cache_read_tokens"`
+	InputTokens         int64 `json:"input_tokens"`
+	OutputTokens        int64 `json:"output_tokens"`
+	CacheCreationTokens int64 `json:"cache_creation_tokens"`
+	CacheReadTokens     int64 `json:"cache_read_tokens"`
 
 	InputCostUSD         float64 `json:"input_cost_usd"`
 	OutputCostUSD        float64 `json:"output_cost_usd"`
@@ -144,9 +173,9 @@ func (ut *UsageTracker) QueryUsageSummary(ctx context.Context, opts *QueryOption
 		total_cache_creation_tokens, total_cache_read_tokens,
 		total_cost_usd, COALESCE(avg_duration_ms, 0.0) as avg_duration_ms, created_at, updated_at
 		FROM usage_summary WHERE 1=1`
-	
+
 	var args []interface{}
-	
+
 	if opts.StartDate != nil {
 		query += " AND date >= ?"
 		args = append(args, opts.StartDate.Format("2006-01-02"))
@@ -167,9 +196,9 @@ func (ut *UsageTracker) QueryUsageSummary(ctx context.Context, opts *QueryOption
 		query += " AND group_name = ?"
 		args = append(args, opts.GroupName)
 	}
-	
+
 	query += " ORDER BY date DESC, total_cost_usd DESC"
-	
+
 	if opts.Limit > 0 {
 		query += " LIMIT ?"
 		args = append(args, opts.Limit)
@@ -178,13 +207,13 @@ func (ut *UsageTracker) QueryUsageSummary(ctx context.Context, opts *QueryOption
 		query += " OFFSET ?"
 		args = append(args, opts.Offset)
 	}
-	
+
 	rows, err := ut.readDB.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query usage summary: %w", err)
 	}
 	defer rows.Close()
-	
+
 	var summaries []UsageSummary
 	for rows.Next() {
 		var summary UsageSummary
@@ -201,11 +230,11 @@ func (ut *UsageTracker) QueryUsageSummary(ctx context.Context, opts *QueryOption
 		}
 		summaries = append(summaries, summary)
 	}
-	
+
 	if err = rows.Err(); err != nil {
 		return nil, fmt.Errorf("error iterating usage summary rows: %w", err)
 	}
-	
+
 	return summaries, nil
 }
 
@@ -304,7 +333,7 @@ func (ut *UsageTracker) QueryRequestDetails(ctx context.Context, opts *QueryOpti
 	}
 
 	query += " ORDER BY start_time DESC"
-	
+
 	if opts.Limit > 0 {
 		query += " LIMIT ?"
 		args = append(args, opts.Limit)
@@ -313,13 +342,13 @@ func (ut *UsageTracker) QueryRequestDetails(ctx context.Context, opts *QueryOpti
 		query += " OFFSET ?"
 		args = append(args, opts.Offset)
 	}
-	
+
 	rows, err := ut.readDB.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query request details: %w", err)
 	}
 	defer rows.Close()
-	
+
 	var details []RequestDetail
 	for rows.Next() {
 		var detail RequestDetail
@@ -341,11 +370,11 @@ func (ut *UsageTracker) QueryRequestDetails(ctx context.Context, opts *QueryOpti
 		}
 		details = append(details, detail)
 	}
-	
+
 	if err = rows.Err(); err != nil {
 		return nil, fmt.Errorf("error iterating request detail rows: %w", err)
 	}
-	
+
 	return details, nil
 }
 
@@ -358,7 +387,7 @@ func (ut *UsageTracker) QueryUsageStats(ctx context.Context, period string) (*Us
 	// Calculate date range based on period
 	endDate := time.Now()
 	var startDate time.Time
-	
+
 	switch period {
 	case "1d":
 		startDate = endDate.AddDate(0, 0, -1)
@@ -371,7 +400,7 @@ func (ut *UsageTracker) QueryUsageStats(ctx context.Context, period string) (*Us
 	default:
 		startDate = endDate.AddDate(0, 0, -7) // default to 7 days
 	}
-	
+
 	query := `SELECT 
 		COUNT(*) as total_requests,
 		CAST(SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS FLOAT) / COUNT(*) * 100 as success_rate,
@@ -379,10 +408,10 @@ func (ut *UsageTracker) QueryUsageStats(ctx context.Context, period string) (*Us
 		SUM(total_cost_usd) as total_cost
 		FROM request_logs 
 		WHERE start_time >= ? AND start_time <= ?`
-	
+
 	var stats UsageStats
 	stats.Period = period
-	
+
 	err := ut.readDB.QueryRowContext(ctx, query, startDate, endDate).Scan(
 		&stats.TotalRequests,
 		&stats.SuccessRate,
@@ -392,16 +421,125 @@ func (ut *UsageTracker) QueryUsageStats(ctx context.Context, period string) (*Us
 	if err != nil {
 		return nil, fmt.Errorf("failed to query usage stats: %w", err)
 	}
-	
+
 	// 添加调试日志
-	slog.Debug("Usage stats query result", 
+	slog.Debug("Usage stats query result",
 		"total_requests", stats.TotalRequests,
 		"success_rate", stats.SuccessRate,
 		"period", period,
 		"start_date", startDate,
 		"end_date", endDate)
-	
+
 	return &stats, nil
+}
+
+// QueryUsageStatsTotals 查询聚合统计（数据库部分）。
+// 该方法只做聚合，不返回明细，适用于前端统计卡片/图表的快速刷新。
+func (ut *UsageTracker) QueryUsageStatsTotals(ctx context.Context, opts *QueryOptions) (*UsageStatsTotals, error) {
+	if ut.readDB == nil {
+		return nil, fmt.Errorf("read database not initialized")
+	}
+
+	query := `SELECT
+		COUNT(*) as total_requests,
+		COALESCE(SUM(CASE WHEN status IN ('completed', 'processing') THEN 1 ELSE 0 END), 0) as success_requests,
+		COALESCE(SUM(CASE WHEN status IN ('failed', 'error', 'auth_error', 'rate_limited', 'server_error', 'network_error', 'stream_error', 'timeout') THEN 1 ELSE 0 END), 0) as failed_requests,
+		COALESCE(SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens), 0) as total_tokens,
+		COALESCE(SUM(total_cost_usd), 0.0) as total_cost_usd,
+		COALESCE(SUM(CASE WHEN duration_ms IS NOT NULL AND duration_ms > 0 THEN duration_ms ELSE 0 END), 0) as duration_sum_ms,
+		COALESCE(SUM(CASE WHEN duration_ms IS NOT NULL AND duration_ms > 0 THEN 1 ELSE 0 END), 0) as duration_count
+		FROM request_logs WHERE 1=1`
+
+	var args []interface{}
+
+	if opts != nil {
+		if opts.StartDate != nil {
+			query += " AND start_time >= ?"
+			args = append(args, opts.StartDate.Format("2006-01-02 15:04:05-07:00"))
+		}
+		if opts.EndDate != nil {
+			query += " AND start_time <= ?"
+			args = append(args, opts.EndDate.Format("2006-01-02 15:04:05-07:00"))
+		}
+		if opts.ModelName != "" {
+			query += " AND model_name = ?"
+			args = append(args, opts.ModelName)
+		}
+		if opts.Channel != "" {
+			query += " AND channel = ?"
+			args = append(args, opts.Channel)
+		}
+		if opts.EndpointName != "" {
+			query += " AND endpoint_name = ?"
+			args = append(args, opts.EndpointName)
+		}
+		if opts.GroupName != "" {
+			query += " AND group_name = ?"
+			args = append(args, opts.GroupName)
+		}
+		if opts.Status != "" {
+			// 与 QueryRequestDetails 一致：failed 为兼容集合查询，其余精确匹配。
+			switch opts.Status {
+			case "failed":
+				query += " AND status IN ('failed', 'error', 'auth_error', 'rate_limited', 'server_error', 'network_error', 'stream_error', 'timeout')"
+			default:
+				query += " AND status = ?"
+				args = append(args, opts.Status)
+			}
+		}
+	}
+
+	var totals UsageStatsTotals
+	if err := ut.readDB.QueryRowContext(ctx, query, args...).Scan(
+		&totals.TotalRequests,
+		&totals.SuccessRequests,
+		&totals.FailedRequests,
+		&totals.TotalTokens,
+		&totals.TotalCostUSD,
+		&totals.DurationSumMs,
+		&totals.DurationCount,
+	); err != nil {
+		return nil, fmt.Errorf("failed to query usage stats totals: %w", err)
+	}
+
+	return &totals, nil
+}
+
+// QueryUsageStatsTotalsWithHotPool 双源聚合：热池 + 数据库。
+// 相比 QueryRequestDetailsWithHotPool：不拉取大量明细，避免大数据量时拖慢 UI。
+func (ut *UsageTracker) QueryUsageStatsTotalsWithHotPool(ctx context.Context, opts *QueryOptions) (*UsageStatsTotals, error) {
+	dbTotals, err := ut.QueryUsageStatsTotals(ctx, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	// 热池部分：仅遍历活跃请求（通常数量有限），成本可控。
+	hotRequests := ut.getFilteredHotPoolRequests(opts)
+	if len(hotRequests) == 0 {
+		return dbTotals, nil
+	}
+
+	var hotTotals UsageStatsTotals
+	for _, req := range hotRequests {
+		hotTotals.TotalRequests++
+		switch req.Status {
+		case "completed", "processing":
+			hotTotals.SuccessRequests++
+		case "failed", "error", "auth_error", "rate_limited", "server_error", "network_error", "stream_error", "timeout":
+			hotTotals.FailedRequests++
+		}
+
+		hotTotals.TotalTokens += req.InputTokens + req.OutputTokens + req.CacheCreationTokens + req.CacheReadTokens
+		hotTotals.TotalCostUSD += req.TotalCostUSD
+
+		if req.DurationMs != nil && *req.DurationMs > 0 {
+			hotTotals.DurationSumMs += *req.DurationMs
+			hotTotals.DurationCount++
+		}
+	}
+
+	dbTotals.add(hotTotals)
+	return dbTotals, nil
 }
 
 // CountRequestDetails returns the total count of request details matching the query options
@@ -438,8 +576,14 @@ func (ut *UsageTracker) CountRequestDetails(ctx context.Context, opts *QueryOpti
 		args = append(args, opts.GroupName)
 	}
 	if opts.Status != "" {
-		query += " AND status = ?"
-		args = append(args, opts.Status)
+		// 与 QueryRequestDetails 保持一致：failed 代表一组失败/错误状态
+		switch opts.Status {
+		case "failed":
+			query += " AND status IN ('failed', 'error', 'auth_error', 'rate_limited', 'server_error', 'network_error', 'stream_error', 'timeout')"
+		default:
+			query += " AND status = ?"
+			args = append(args, opts.Status)
+		}
 	}
 
 	var count int

@@ -44,10 +44,10 @@ type CategoryInfo struct {
 
 // SettingsStorageStatus 设置存储状态
 type SettingsStorageStatus struct {
-	Enabled        bool `json:"enabled"`
-	TotalCount     int  `json:"total_count"`
-	CategoryCount  int  `json:"category_count"`
-	IsInitialized  bool `json:"is_initialized"`
+	Enabled       bool `json:"enabled"`
+	TotalCount    int  `json:"total_count"`
+	CategoryCount int  `json:"category_count"`
+	IsInitialized bool `json:"is_initialized"`
 }
 
 // UpdateSettingInput 更新单个设置的输入
@@ -73,13 +73,14 @@ type PortInfo struct {
 // GetSettingsStorageStatus 获取设置存储状态
 func (a *App) GetSettingsStorageStatus() SettingsStorageStatus {
 	a.mu.RLock()
-	defer a.mu.RUnlock()
+	settingsService := a.settingsService
+	a.mu.RUnlock()
 
 	status := SettingsStorageStatus{
 		Enabled: false,
 	}
 
-	if a.settingsService == nil {
+	if settingsService == nil {
 		return status
 	}
 
@@ -89,15 +90,15 @@ func (a *App) GetSettingsStorageStatus() SettingsStorageStatus {
 	defer cancel()
 
 	// 获取统计信息
-	initialized, _ := a.settingsService.IsInitialized(ctx)
+	initialized, _ := settingsService.IsInitialized(ctx)
 	status.IsInitialized = initialized
 
-	records, err := a.settingsService.GetAll(ctx)
+	records, err := settingsService.GetAll(ctx)
 	if err == nil {
 		status.TotalCount = len(records)
 	}
 
-	categories := a.settingsService.GetCategories()
+	categories := settingsService.GetCategories()
 	status.CategoryCount = len(categories)
 
 	return status
@@ -106,13 +107,14 @@ func (a *App) GetSettingsStorageStatus() SettingsStorageStatus {
 // GetSettingCategories 获取所有设置分类
 func (a *App) GetSettingCategories() []CategoryInfo {
 	a.mu.RLock()
-	defer a.mu.RUnlock()
+	settingsService := a.settingsService
+	a.mu.RUnlock()
 
-	if a.settingsService == nil {
+	if settingsService == nil {
 		return []CategoryInfo{}
 	}
 
-	serviceCategories := a.settingsService.GetCategories()
+	serviceCategories := settingsService.GetCategories()
 	result := make([]CategoryInfo, 0, len(serviceCategories))
 
 	for _, cat := range serviceCategories {
@@ -131,16 +133,17 @@ func (a *App) GetSettingCategories() []CategoryInfo {
 // GetAllSettings 获取所有设置
 func (a *App) GetAllSettings() ([]SettingInfo, error) {
 	a.mu.RLock()
-	defer a.mu.RUnlock()
+	settingsService := a.settingsService
+	a.mu.RUnlock()
 
-	if a.settingsService == nil {
+	if settingsService == nil {
 		return nil, fmt.Errorf("设置服务未启用 (需要设置 usage_tracking.enabled: true)")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	records, err := a.settingsService.GetAll(ctx)
+	records, err := settingsService.GetAll(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("获取设置列表失败: %w", err)
 	}
@@ -156,16 +159,17 @@ func (a *App) GetAllSettings() ([]SettingInfo, error) {
 // GetSettingsByCategory 获取指定分类的设置
 func (a *App) GetSettingsByCategory(category string) ([]SettingInfo, error) {
 	a.mu.RLock()
-	defer a.mu.RUnlock()
+	settingsService := a.settingsService
+	a.mu.RUnlock()
 
-	if a.settingsService == nil {
+	if settingsService == nil {
 		return nil, fmt.Errorf("设置服务未启用")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	records, err := a.settingsService.GetByCategory(ctx, category)
+	records, err := settingsService.GetByCategory(ctx, category)
 	if err != nil {
 		return nil, fmt.Errorf("获取分类设置失败: %w", err)
 	}
@@ -181,16 +185,17 @@ func (a *App) GetSettingsByCategory(category string) ([]SettingInfo, error) {
 // GetSetting 获取单个设置
 func (a *App) GetSetting(category, key string) (SettingInfo, error) {
 	a.mu.RLock()
-	defer a.mu.RUnlock()
+	settingsService := a.settingsService
+	a.mu.RUnlock()
 
-	if a.settingsService == nil {
+	if settingsService == nil {
 		return SettingInfo{}, fmt.Errorf("设置服务未启用")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	record, err := a.settingsService.Get(ctx, category, key)
+	record, err := settingsService.Get(ctx, category, key)
 	if err != nil {
 		return SettingInfo{}, fmt.Errorf("获取设置失败: %w", err)
 	}
@@ -204,21 +209,23 @@ func (a *App) GetSetting(category, key string) (SettingInfo, error) {
 // UpdateSetting 更新单个设置
 func (a *App) UpdateSetting(input UpdateSettingInput) error {
 	a.mu.RLock()
-	defer a.mu.RUnlock()
+	settingsService := a.settingsService
+	logger := a.logger
+	a.mu.RUnlock()
 
-	if a.settingsService == nil {
+	if settingsService == nil {
 		return fmt.Errorf("设置服务未启用")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	if err := a.settingsService.Set(ctx, input.Category, input.Key, input.Value); err != nil {
+	if err := settingsService.Set(ctx, input.Category, input.Key, input.Value); err != nil {
 		return fmt.Errorf("更新设置失败: %w", err)
 	}
 
-	if a.logger != nil {
-		a.logger.Info("✅ 设置已更新", "category", input.Category, "key", input.Key)
+	if logger != nil {
+		logger.Info("✅ 设置已更新", "category", input.Category, "key", input.Key)
 	}
 
 	return nil
@@ -227,9 +234,11 @@ func (a *App) UpdateSetting(input UpdateSettingInput) error {
 // BatchUpdateSettings 批量更新设置
 func (a *App) BatchUpdateSettings(input BatchUpdateSettingsInput) error {
 	a.mu.RLock()
-	defer a.mu.RUnlock()
+	settingsService := a.settingsService
+	logger := a.logger
+	a.mu.RUnlock()
 
-	if a.settingsService == nil {
+	if settingsService == nil {
 		return fmt.Errorf("设置服务未启用")
 	}
 
@@ -246,12 +255,12 @@ func (a *App) BatchUpdateSettings(input BatchUpdateSettingsInput) error {
 		})
 	}
 
-	if err := a.settingsService.UpdateAndApply(ctx, records); err != nil {
+	if err := settingsService.UpdateAndApply(ctx, records); err != nil {
 		return fmt.Errorf("批量更新设置失败: %w", err)
 	}
 
-	if a.logger != nil {
-		a.logger.Info("✅ 设置已批量更新并应用", "count", len(records))
+	if logger != nil {
+		logger.Info("✅ 设置已批量更新并应用", "count", len(records))
 	}
 
 	return nil
@@ -260,21 +269,23 @@ func (a *App) BatchUpdateSettings(input BatchUpdateSettingsInput) error {
 // ResetCategorySettings 重置分类设置为默认值
 func (a *App) ResetCategorySettings(category string) error {
 	a.mu.RLock()
-	defer a.mu.RUnlock()
+	settingsService := a.settingsService
+	logger := a.logger
+	a.mu.RUnlock()
 
-	if a.settingsService == nil {
+	if settingsService == nil {
 		return fmt.Errorf("设置服务未启用")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	if err := a.settingsService.ResetCategory(ctx, category); err != nil {
+	if err := settingsService.ResetCategory(ctx, category); err != nil {
 		return fmt.Errorf("重置设置失败: %w", err)
 	}
 
-	if a.logger != nil {
-		a.logger.Info("✅ 设置分类已重置", "category", category)
+	if logger != nil {
+		logger.Info("✅ 设置分类已重置", "category", category)
 	}
 
 	return nil
@@ -283,18 +294,24 @@ func (a *App) ResetCategorySettings(category string) error {
 // GetPortInfo 获取端口信息
 func (a *App) GetPortInfo() PortInfo {
 	a.mu.RLock()
-	defer a.mu.RUnlock()
+	cfg := a.config
+	portManager := a.portManager
+	a.mu.RUnlock()
 
 	// 默认值
+	defaultPort := 0
+	if cfg != nil {
+		defaultPort = cfg.Server.Port
+	}
 	info := PortInfo{
-		PreferredPort: a.config.Server.Port,
-		ActualPort:    a.config.Server.Port,
+		PreferredPort: defaultPort,
+		ActualPort:    defaultPort,
 		IsDefault:     true,
 		WasOccupied:   false,
 	}
 
-	if a.portManager != nil {
-		portInfo := a.portManager.GetPortInfo()
+	if portManager != nil {
+		portInfo := portManager.GetPortInfo()
 		info = PortInfo{
 			PreferredPort: portInfo.PreferredPort,
 			ActualPort:    portInfo.ActualPort,
@@ -309,9 +326,12 @@ func (a *App) GetPortInfo() PortInfo {
 // UpdatePreferredPort 更新首选端口（需要重启生效）
 func (a *App) UpdatePreferredPort(port int) error {
 	a.mu.RLock()
-	defer a.mu.RUnlock()
+	settingsService := a.settingsService
+	portManager := a.portManager
+	logger := a.logger
+	a.mu.RUnlock()
 
-	if a.settingsService == nil {
+	if settingsService == nil {
 		return fmt.Errorf("设置服务未启用")
 	}
 
@@ -323,17 +343,17 @@ func (a *App) UpdatePreferredPort(port int) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	if err := a.settingsService.Set(ctx, service.CategoryServer, "preferred_port", fmt.Sprintf("%d", port)); err != nil {
+	if err := settingsService.Set(ctx, service.CategoryServer, "preferred_port", fmt.Sprintf("%d", port)); err != nil {
 		return fmt.Errorf("更新首选端口失败: %w", err)
 	}
 
 	// 更新 PortManager
-	if a.portManager != nil {
-		a.portManager.SetPreferredPort(port)
+	if portManager != nil {
+		portManager.SetPreferredPort(port)
 	}
 
-	if a.logger != nil {
-		a.logger.Info("✅ 首选端口已更新（需要重启生效）", "port", port)
+	if logger != nil {
+		logger.Info("✅ 首选端口已更新（需要重启生效）", "port", port)
 	}
 
 	return nil
