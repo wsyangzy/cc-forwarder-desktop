@@ -34,6 +34,7 @@ const (
 	ValueTypeFloat    = "float"
 	ValueTypeBool     = "bool"
 	ValueTypeDuration = "duration"
+	ValueTypePassword = "password"
 	ValueTypeJSON     = "json"
 )
 
@@ -406,7 +407,7 @@ func (s *SettingsService) getDefaultsForCategory(category string) []*store.Setti
 	case CategoryAuth:
 		return []*store.SettingRecord{
 			{Category: CategoryAuth, Key: "enabled", Value: "false", ValueType: ValueTypeBool, Label: "启用鉴权", Description: "是否启用 API 访问鉴权", DisplayOrder: 1},
-			{Category: CategoryAuth, Key: "token", Value: "", ValueType: ValueTypeString, Label: "鉴权 Token", Description: "Bearer Token 值", DisplayOrder: 2},
+			{Category: CategoryAuth, Key: "token", Value: "", ValueType: ValueTypePassword, Label: "鉴权 Token", Description: "Bearer Token 值", DisplayOrder: 2},
 		}
 
 	case CategoryTokenCounting:
