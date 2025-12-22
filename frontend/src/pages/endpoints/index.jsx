@@ -268,16 +268,6 @@ const EndpointMiniCard = ({
           </div>
 
           <div className="flex items-center gap-1 flex-shrink-0">
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                navigator.clipboard.writeText(JSON.stringify(endpoint, null, 2));
-              }}
-              className="p-1.5 text-slate-400 hover:bg-slate-100 hover:text-indigo-600 rounded-md transition-colors"
-              title="复制配置"
-            >
-              <Copy size={14} />
-            </button>
             {isSqliteMode && (
               <>
                 <button
@@ -403,8 +393,18 @@ const EndpointDetailModal = ({
   const hasApiKey = !!(apiKeyRaw || apiKeyMasked);
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50 animate-fade-in">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-3xl max-h-[calc(100vh-2rem)] flex flex-col overflow-hidden">
+    <div
+      className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50 animate-fade-in"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) {
+          onClose?.();
+        }
+      }}
+    >
+      <div
+        className="bg-white rounded-2xl shadow-xl w-full max-w-3xl max-h-[calc(100vh-2rem)] flex flex-col overflow-hidden"
+        onMouseDown={(e) => e.stopPropagation()}
+      >
         <div className="flex items-start justify-between px-6 py-4 border-b border-slate-100">
           <div className="min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
@@ -503,7 +503,7 @@ const EndpointDetailModal = ({
             ))}
           </div>
 
-          <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="bg-slate-50 rounded-xl p-3 border border-slate-200/60">
               <div className="text-xs text-slate-500 mb-1">冷却(s)</div>
               <div className="text-sm font-semibold text-slate-900 break-all">
@@ -513,7 +513,7 @@ const EndpointDetailModal = ({
 
             <div className="bg-slate-50 rounded-xl p-3 border border-slate-200/60">
               <div className="flex items-center justify-between mb-1">
-                <div className="text-xs text-slate-500">Token</div>
+                <div className="text-xs text-slate-500">Token（脱敏）</div>
                 <button
                   onClick={() => {
                     if (tokenRaw) {
@@ -521,13 +521,14 @@ const EndpointDetailModal = ({
                     }
                   }}
                   disabled={!tokenRaw}
-                  className={`inline-flex items-center gap-1 text-xs transition-colors ${
-                    tokenRaw ? 'text-slate-400 hover:text-indigo-600' : 'text-slate-300 cursor-not-allowed'
+                  className={`inline-flex items-center justify-center p-1 rounded-md transition-colors ${
+                    tokenRaw
+                      ? 'text-slate-400 hover:text-indigo-600 hover:bg-white/70'
+                      : 'text-slate-300 cursor-not-allowed'
                   }`}
                   title={tokenRaw ? '复制原始 Token' : '无原始 Token（仅 SQLite 记录可复制）'}
                 >
                   <Copy size={12} />
-                  复制
                 </button>
               </div>
               <div className="text-sm font-mono text-slate-900 break-all">
@@ -539,7 +540,7 @@ const EndpointDetailModal = ({
           {hasApiKey && (
             <div className="mt-3 bg-slate-50 rounded-xl p-3 border border-slate-200/60">
               <div className="flex items-center justify-between mb-1">
-                <div className="text-xs text-slate-500">API Key</div>
+                <div className="text-xs text-slate-500">API Key（脱敏）</div>
                 <button
                   onClick={() => {
                     if (apiKeyRaw) {
@@ -547,13 +548,14 @@ const EndpointDetailModal = ({
                     }
                   }}
                   disabled={!apiKeyRaw}
-                  className={`inline-flex items-center gap-1 text-xs transition-colors ${
-                    apiKeyRaw ? 'text-slate-400 hover:text-indigo-600' : 'text-slate-300 cursor-not-allowed'
+                  className={`inline-flex items-center justify-center p-1 rounded-md transition-colors ${
+                    apiKeyRaw
+                      ? 'text-slate-400 hover:text-indigo-600 hover:bg-white/70'
+                      : 'text-slate-300 cursor-not-allowed'
                   }`}
                   title={apiKeyRaw ? '复制原始 API Key' : '无原始 API Key（仅 SQLite 记录可复制）'}
                 >
                   <Copy size={12} />
-                  复制
                 </button>
               </div>
               <div className="text-sm font-mono text-slate-900 break-all">

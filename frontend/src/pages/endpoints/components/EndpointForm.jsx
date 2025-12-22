@@ -68,21 +68,63 @@ const PasswordInput = ({ label, name, value, onChange, placeholder, required, he
   );
 };
 
-const FormCheckbox = ({ label, name, checked, onChange, help }) => (
-  <div className="flex items-start gap-3">
-    <input
-      type="checkbox"
-      name={name}
-      checked={checked || false}
-      onChange={onChange}
-      className="mt-1 w-4 h-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500"
-    />
-    <div>
-      <label className="text-sm font-medium text-slate-700">{label}</label>
-      {help && <p className="text-xs text-slate-400">{help}</p>}
+const FormCheckbox = ({ label, name, checked, onChange, help, disabled = false }) => {
+  const isChecked = !!checked;
+  const toggle = () => {
+    if (disabled) return;
+    onChange?.({ target: { name, type: 'checkbox', checked: !isChecked } });
+  };
+
+  return (
+    <div
+      className={`
+        flex items-start justify-between gap-3 p-3 rounded-xl border transition-colors
+        ${disabled ? 'bg-slate-50 opacity-70' : 'bg-white hover:bg-slate-50/60'}
+        ${isChecked ? 'border-emerald-200' : 'border-slate-200'}
+      `}
+      onClick={toggle}
+      role="button"
+      tabIndex={disabled ? -1 : 0}
+      onKeyDown={(e) => {
+        if (disabled) return;
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          toggle();
+        }
+      }}
+    >
+      <div className="min-w-0">
+        <div className="text-sm font-medium text-slate-800">{label}</div>
+        {help && <p className="text-xs text-slate-400 mt-1">{help}</p>}
+      </div>
+
+      <button
+        type="button"
+        role="switch"
+        aria-checked={isChecked}
+        aria-label={label}
+        disabled={disabled}
+        onClick={(e) => {
+          e.stopPropagation();
+          toggle();
+        }}
+        className={`
+          relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full border transition-colors
+          focus:outline-none focus:ring-2 focus:ring-indigo-500/30
+          ${disabled ? 'cursor-not-allowed' : 'cursor-pointer'}
+          ${isChecked ? 'bg-emerald-500 border-emerald-500' : 'bg-slate-200 border-slate-200'}
+        `}
+      >
+        <span
+          className={`
+            inline-block h-5 w-5 rounded-full bg-white shadow-sm ring-1 ring-black/5 transition-transform
+            ${isChecked ? 'translate-x-5' : 'translate-x-0.5'}
+          `}
+        />
+      </button>
     </div>
-  </div>
-);
+  );
+};
 
 // ============================================
 // 端点表单组件
@@ -400,12 +442,13 @@ const EndpointForm = ({
               />
             </div>
 
-            <div className="flex gap-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormCheckbox
                 label="参与渠道内故障转移"
                 name="failoverEnabled"
                 checked={formData.failoverEnabled}
                 onChange={handleChange}
+                disabled={loading}
                 help="关闭后该端点不会参与同一渠道内的端点故障转移"
               />
 
@@ -414,6 +457,7 @@ const EndpointForm = ({
                 name="supportsCountTokens"
                 checked={formData.supportsCountTokens}
                 onChange={handleChange}
+                disabled={loading}
                 help="端点是否支持 Token 计数 API"
               />
             </div>

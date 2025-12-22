@@ -2,10 +2,8 @@
 // EndpointRow - 端点表格行组件
 // ============================================
 
-import React from 'react';
 import {
   Globe,
-  Copy,
   Pencil,
   Trash2,
   ArrowRightLeft,
@@ -256,15 +254,6 @@ const EndpointRow = ({
       {/* 操作 */}
       <td className="px-6 py-4 text-right">
         <div className="flex items-center justify-end space-x-1">
-          <button
-            onClick={() => {
-              navigator.clipboard.writeText(JSON.stringify(endpoint, null, 2));
-            }}
-            className="p-1.5 text-slate-400 hover:bg-slate-100 hover:text-indigo-600 rounded-md transition-colors"
-            title="复制配置"
-          >
-            <Copy size={14} />
-          </button>
           {isSqliteMode && (
             <>
               <button
