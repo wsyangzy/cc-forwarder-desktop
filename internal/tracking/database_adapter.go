@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"time"
 )
 
@@ -114,7 +115,8 @@ func getDatabaseType(config DatabaseConfig) string {
 func setDefaultConfig(config *DatabaseConfig) {
 	// SQLite 默认配置
 	if config.DatabasePath == "" {
-		config.DatabasePath = "data/cc-forwarder.db"
+		// 默认使用跨平台用户目录，避免在桌面应用/打包环境下写入到工作目录导致“数据丢失/分裂”。
+		config.DatabasePath = filepath.Join(getAppDataDir(), "data", "cc-forwarder.db")
 	}
 	if config.Timezone == "" {
 		config.Timezone = "Asia/Shanghai"

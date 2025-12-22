@@ -387,13 +387,8 @@ func (a *App) setupEventBus() {
 
 // setupEndpointStore 设置端点存储 (v5.0+ SQLite)
 func (a *App) setupEndpointStore() {
-	// 使用 usageTracker 的数据库连接（如果已启用）
-	if a.usageTracker == nil {
-		a.logger.Warn("⚠️ 端点存储需要使用追踪功能 (usage_tracking.enabled: true)")
-		return
-	}
-
-	// 获取数据库连接：优先使用 storeDB（避免 tracking 写入阻塞管理写操作）
+	// 获取数据库连接：优先使用 storeDB（避免 tracking 写入阻塞管理写操作）。
+	// 注意：端点/渠道管理属于“管理存储”，不应强耦合到 usage tracking 是否启用。
 	db := a.storeDB
 	if db == nil && a.usageTracker != nil {
 		db = a.usageTracker.GetDB()
@@ -690,6 +685,24 @@ func (a *App) syncEndpointMultipliersToTracker(ctx context.Context) {
 	a.logger.Debug("已同步端点倍率到 UsageTracker", "count", len(multipliers))
 }
 
+// getEffectiveUsageDBPath returns the single SQLite database path used by:
+// - usage tracker (request_logs / usage_summary / ...)
+// - management stores (channels/endpoints/settings/model_pricing)
+//
+// 优先级：usage_tracking.database.path > usage_tracking.database_path > 默认用户目录。
+func (a *App) getEffectiveUsageDBPath() string {
+	if a == nil || a.config == nil {
+		return ""
+	}
+	if a.config.UsageTracking.Database != nil && a.config.UsageTracking.Database.Path != "" {
+		return a.config.UsageTracking.Database.Path
+	}
+	if a.config.UsageTracking.DatabasePath != "" {
+		return a.config.UsageTracking.DatabasePath
+	}
+	return filepath.Join(utils.GetDataDir(), "cc-forwarder.db")
+}
+
 // setupUsageTracker 设置使用追踪
 func (a *App) setupUsageTracker() {
 	if !a.config.UsageTracking.Enabled {
@@ -697,23 +710,23 @@ func (a *App) setupUsageTracker() {
 		return
 	}
 
-	// 确保数据库路径不为空（防止 sqlite_adapter 使用默认相对路径）
-	if a.config.UsageTracking.DatabasePath == "" {
-		a.config.UsageTracking.DatabasePath = filepath.Join(utils.GetDataDir(), "cc-forwarder.db")
-		a.logger.Warn("⚠️ DatabasePath 为空，已设置为用户目录",
-			"path", a.config.UsageTracking.DatabasePath)
+	// 统一数据库路径（避免 Database.Path 为空时回退到工作目录，导致历史数据“看不到/分裂”）
+	dbPath := a.getEffectiveUsageDBPath()
+	a.config.UsageTracking.DatabasePath = dbPath
+	if a.config.UsageTracking.Database != nil && a.config.UsageTracking.Database.Path == "" {
+		a.config.UsageTracking.Database.Path = dbPath
 	}
 
 	// v6.1+ 自动迁移：如果新库不存在但旧库存在，则复制旧库到新路径。
 	a.migrateLegacyDatabaseIfNeeded()
 
-	a.logger.Info("📊 初始化使用追踪器", "db_path", a.config.UsageTracking.DatabasePath)
+	a.logger.Info("📊 初始化使用追踪器", "db_path", dbPath)
 
 	// v5.0+ 重构：定价配置完全从 SQLite 加载，不再依赖 config.yaml
 	// 初始化时使用空定价，后续由 syncPricingToTracker() 从数据库加载
 	trackingConfig := &tracking.Config{
 		Enabled:         a.config.UsageTracking.Enabled,
-		DatabasePath:    a.config.UsageTracking.DatabasePath,
+		DatabasePath:    dbPath,
 		Database:        a.config.UsageTracking.Database,
 		BufferSize:      a.config.UsageTracking.BufferSize,
 		BatchSize:       a.config.UsageTracking.BatchSize,
@@ -732,21 +745,34 @@ func (a *App) setupUsageTracker() {
 		return
 	}
 
-	a.logger.Info("📊 使用追踪已启用", "database", a.config.UsageTracking.DatabasePath)
+	a.logger.Info("📊 使用追踪已启用", "database", dbPath)
 }
 
 // setupStoreDB 初始化一个专用的 SQLite 连接用于管理写操作（channels/endpoints/settings）。
 // 目的：避免 UsageTracker 的后台写入/归档在同一连接上阻塞 UI 管理操作，造成“前端超时但最终成功”的错觉。
 func (a *App) setupStoreDB() {
-	if a.usageTracker == nil || a.config == nil {
+	if a.config == nil {
 		return
 	}
 	if a.storeDB != nil {
 		return
 	}
-	dbPath := a.config.UsageTracking.DatabasePath
-	if dbPath == "" {
-		return
+	dbPath := a.getEffectiveUsageDBPath()
+	// 运行时回填，确保后续组件拿到统一路径（即使 usage_tracking.enabled=false）。
+	a.config.UsageTracking.DatabasePath = dbPath
+	if a.config.UsageTracking.Database != nil && a.config.UsageTracking.Database.Path == "" {
+		a.config.UsageTracking.Database.Path = dbPath
+	}
+
+	// 即使未启用 usage tracking，也执行旧库迁移，避免共享 usage.db 导致锁冲突。
+	a.migrateLegacyDatabaseIfNeeded()
+
+	// 确保数据库目录存在
+	if dbPath != ":memory:" {
+		if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
+			a.logger.Warn("⚠️ 创建数据库目录失败", "error", err)
+			return
+		}
 	}
 
 	// 使用适中的 busy_timeout：降低“瞬时锁争用”带来的偶发失败，同时由上层 ctx 超时控制整体等待。
@@ -768,6 +794,27 @@ func (a *App) setupStoreDB() {
 		return
 	}
 
+	// 当 usageTracker 未启用/初始化失败时，仍需要确保管理表（settings/channels/endpoints/model_pricing 等）存在。
+	if a.usageTracker == nil {
+		adapter, err := tracking.NewDatabaseAdapter(tracking.DatabaseConfig{
+			Type:         "sqlite",
+			DatabasePath: dbPath,
+			Timezone:     a.config.Timezone,
+		})
+		if err == nil {
+			if err := adapter.Open(); err == nil {
+				if err := adapter.InitSchema(); err != nil {
+					a.logger.Warn("⚠️ 初始化数据库 Schema 失败（管理存储）", "error", err)
+				}
+				_ = adapter.Close()
+			} else {
+				a.logger.Warn("⚠️ 打开数据库失败（管理存储）", "error", err)
+			}
+		} else {
+			a.logger.Warn("⚠️ 创建数据库适配器失败（管理存储）", "error", err)
+		}
+	}
+
 	a.storeDB = db
 	a.logger.Info("✅ 管理数据库连接已就绪", "db", dbPath)
 }
@@ -775,7 +822,7 @@ func (a *App) setupStoreDB() {
 // migrateLegacyDatabaseIfNeeded 将旧版本默认库 usage.db 迁移到新版本默认库 cc-forwarder.db。
 // 目的：避免新旧版本同时运行时共享同一 SQLite 文件导致锁冲突（创建渠道/写入配置“无响应”）。
 func (a *App) migrateLegacyDatabaseIfNeeded() {
-	newPath := a.config.UsageTracking.DatabasePath
+	newPath := a.getEffectiveUsageDBPath()
 	if newPath == "" {
 		return
 	}
@@ -787,61 +834,116 @@ func (a *App) migrateLegacyDatabaseIfNeeded() {
 		return
 	}
 
-	legacyCandidates := []string{defaultOld}
+	legacyCandidates := []string{}
 
-	// 兼容旧版本可能使用的相对路径（例如安装目录/data/usage.db 或运行目录/data/usage.db）
+	// 兼容旧版本/调试环境可能使用的相对路径（例如安装目录/data/*.db 或运行目录/data/*.db）
 	if exe, err := os.Executable(); err == nil {
 		exeDir := filepath.Dir(exe)
-		legacyCandidates = append(legacyCandidates, filepath.Join(exeDir, "data", "usage.db"))
+		legacyCandidates = append(legacyCandidates,
+			filepath.Join(exeDir, "data", "cc-forwarder.db"),
+			filepath.Join(exeDir, "data", "usage.db"),
+		)
 	}
 	if cwd, err := os.Getwd(); err == nil {
-		legacyCandidates = append(legacyCandidates, filepath.Join(cwd, "data", "usage.db"))
+		legacyCandidates = append(legacyCandidates,
+			filepath.Join(cwd, "data", "cc-forwarder.db"),
+			filepath.Join(cwd, "data", "usage.db"),
+		)
 	}
+	// 兼容更老版本：用户目录下的 usage.db
+	legacyCandidates = append(legacyCandidates, defaultOld)
 
-	legacyPath := ""
+	existingLegacy := make([]string, 0, len(legacyCandidates))
+	seen := make(map[string]struct{}, len(legacyCandidates))
 	for _, p := range legacyCandidates {
 		if p == "" {
 			continue
 		}
-		if _, err := os.Stat(p); err == nil {
-			legacyPath = p
-			break
+		cp := filepath.Clean(p)
+		if cp == filepath.Clean(defaultNew) {
+			continue
 		}
+		if _, ok := seen[cp]; ok {
+			continue
+		}
+		if _, err := os.Stat(cp); err != nil {
+			continue
+		}
+		seen[cp] = struct{}{}
+		existingLegacy = append(existingLegacy, cp)
 	}
-	if legacyPath == "" {
+	if len(existingLegacy) == 0 {
 		return
 	}
 
 	// 场景1：新库不存在 -> 直接复制（最简单、最稳定）
 	if _, err := os.Stat(defaultNew); err != nil {
-		if err := copyFile(legacyPath, defaultNew); err != nil {
+		// 选择一个“最佳”的来源文件：优先 request_logs 数量更多的库（更可能包含用户的历史数据）。
+		bestLegacy := existingLegacy[0]
+		bestReq := int64(-1)
+		bestCh := int64(-1)
+		for _, p := range existingLegacy {
+			reqCount, _ := countTableRows(p, "request_logs")
+			chCount, _ := countTableRows(p, "channels")
+			if reqCount > bestReq || (reqCount == bestReq && chCount > bestCh) {
+				bestLegacy = p
+				bestReq = reqCount
+				bestCh = chCount
+			}
+		}
+
+		if err := copyFile(bestLegacy, defaultNew); err != nil {
 			a.logger.Warn("⚠️ 旧数据迁移失败，将使用新的空数据库（可在关闭旧版本后重启再迁移）",
-				"old", legacyPath, "new", defaultNew, "error", err)
+				"old", bestLegacy, "new", defaultNew, "error", err)
 			a.emitNotification("warning", "旧数据迁移失败", "无法复制旧数据库（可能被旧版本占用），将使用新的空数据库；关闭旧版本后重启可再次尝试迁移。")
 			return
 		}
 
-		a.logger.Info("✅ 旧数据迁移完成", "old", legacyPath, "new", defaultNew)
+		// 拷贝后确保 schema 完整（补表/补列/迁移），并从其他来源合并缺失数据。
+		_ = ensureSchemaForDB(defaultNew, a.config.Timezone)
+		for _, p := range existingLegacy {
+			if filepath.Clean(p) == filepath.Clean(bestLegacy) {
+				continue
+			}
+			_ = importLegacyTables(defaultNew, p)
+		}
+
+		a.logger.Info("✅ 旧数据迁移完成", "old", bestLegacy, "new", defaultNew)
 		a.emitNotification("success", "旧数据已迁移", "已将旧版本数据库迁移到新数据库文件（避免新旧版本冲突）。")
 		return
 	}
 
-	// 场景2：新库已存在，但用户反馈“请求追踪历史丢失”：
-	// 多见于新库已被创建（空库）导致复制迁移跳过。此时只导入 request_logs/usage_summary，避免覆盖新库中的配置类表。
+	// 场景2：新库已存在，但用户反馈“历史数据丢失”（多见于新库先被创建为空库，导致复制迁移跳过）。
+	// 这里按“缺什么补什么”的思路合并导入：INSERT OR IGNORE，不覆盖现有配置。
+	_ = ensureSchemaForDB(defaultNew, a.config.Timezone)
+
 	newReqCount, _ := countTableRows(defaultNew, "request_logs")
-	oldReqCount, _ := countTableRows(legacyPath, "request_logs")
-	if newReqCount > 0 || oldReqCount <= 0 {
+	newChCount, _ := countTableRows(defaultNew, "channels")
+	newEpCount, _ := countTableRows(defaultNew, "endpoints")
+
+	needImport := newReqCount == 0 || newChCount == 0 || newEpCount == 0
+	if !needImport {
 		return
 	}
 
-	if err := importTrackingTables(defaultNew, legacyPath); err != nil {
-		a.logger.Warn("⚠️ 旧请求记录导入失败", "old", legacyPath, "new", defaultNew, "error", err)
-		a.emitNotification("warning", "旧请求记录导入失败", "检测到旧数据库存在，但导入请求追踪记录失败；请稍后重试或联系开发者。")
-		return
+	importedAny := false
+	for _, p := range existingLegacy {
+		// 仅在“新库缺数据”时尝试导入，避免每次启动重复扫描大库。
+		oldReqCount, _ := countTableRows(p, "request_logs")
+		oldChCount, _ := countTableRows(p, "channels")
+		oldEpCount, _ := countTableRows(p, "endpoints")
+		if (newReqCount == 0 && oldReqCount > 0) || (newChCount == 0 && oldChCount > 0) || (newEpCount == 0 && oldEpCount > 0) {
+			if err := importLegacyTables(defaultNew, p); err != nil {
+				a.logger.Warn("⚠️ 旧数据导入失败", "old", p, "new", defaultNew, "error", err)
+				continue
+			}
+			importedAny = true
+		}
 	}
-
-	a.logger.Info("✅ 已导入旧请求记录", "old", legacyPath, "new", defaultNew)
-	a.emitNotification("success", "旧请求记录已导入", "已从旧数据库导入请求追踪历史到新数据库（不会覆盖渠道/端点等配置）。")
+	if importedAny {
+		a.logger.Info("✅ 已导入旧数据", "new", defaultNew)
+		a.emitNotification("success", "旧数据已导入", "已从旧数据库合并导入历史数据到当前数据库（不会覆盖现有配置）。")
+	}
 }
 
 func copyFile(src, dst string) error {
@@ -895,7 +997,26 @@ func countTableRows(dbPath, table string) (int64, error) {
 	return count, nil
 }
 
-func importTrackingTables(dstDBPath, legacyDBPath string) error {
+func ensureSchemaForDB(dbPath, timezone string) error {
+	if dbPath == "" {
+		return nil
+	}
+	adapter, err := tracking.NewDatabaseAdapter(tracking.DatabaseConfig{
+		Type:         "sqlite",
+		DatabasePath: dbPath,
+		Timezone:     timezone,
+	})
+	if err != nil {
+		return err
+	}
+	if err := adapter.Open(); err != nil {
+		return err
+	}
+	defer adapter.Close()
+	return adapter.InitSchema()
+}
+
+func importLegacyTables(dstDBPath, legacyDBPath string) error {
 	if dstDBPath == "" || legacyDBPath == "" {
 		return nil
 	}
@@ -926,8 +1047,8 @@ func importTrackingTables(dstDBPath, legacyDBPath string) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	// 仅导入追踪相关表，避免覆盖配置类数据
-	for _, table := range []string{"request_logs", "usage_summary"} {
+	// 导入历史数据（INSERT OR IGNORE），不覆盖新库中已存在的记录
+	for _, table := range []string{"request_logs", "usage_summary", "endpoints", "channels", "model_pricing", "settings"} {
 		cols, err := commonTableColumns(ctx, tx, table)
 		if err != nil {
 			continue
@@ -1267,15 +1388,9 @@ func (a *App) emitConfigReloaded() {
 
 // setupSettingsStore 设置系统设置存储 (v5.1+ SQLite)
 func (a *App) setupSettingsStore() {
-	// 使用 usageTracker 的数据库连接
-	if a.usageTracker == nil {
-		a.logger.Debug("设置存储跳过初始化 (usage_tracking 未启用)")
-		return
-	}
-
 	// 获取数据库连接：优先使用 storeDB
 	db := a.storeDB
-	if db == nil {
+	if db == nil && a.usageTracker != nil {
 		db = a.usageTracker.GetDB()
 	}
 	if db == nil {

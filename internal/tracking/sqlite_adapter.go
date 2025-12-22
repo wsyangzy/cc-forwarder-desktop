@@ -165,9 +165,24 @@ func (s *SQLiteAdapter) InitSchema() error {
 		return fmt.Errorf("failed to read schema.sql: %w", err)
 	}
 
-	// SQLite可以直接执行整个schema
+	// SQLite可以直接执行整个schema。
+	// 但：旧库可能缺少后续新增的列（例如 auth_key），schema.sql 中的索引/触发器会引用这些列，
+	// 导致 Exec 直接失败并中断启动。为保证向后兼容：
+	// - 先尝试执行 schema.sql
+	// - 若因“no such column”失败，则先跑 migrateSchema 补列，再重试执行 schema.sql
 	if _, err := s.db.ExecContext(ctx, string(schema)); err != nil {
-		return fmt.Errorf("failed to execute schema: %w", err)
+		// modernc sqlite 错误示例：SQL logic error: no such column: auth_key (1)
+		if strings.Contains(err.Error(), "no such column:") {
+			s.logger.Warn("schema.sql 执行失败（缺少列），将先执行迁移后重试", "error", err)
+			if err := s.migrateSchema(ctx); err != nil {
+				return fmt.Errorf("failed to migrate schema (pre-schema retry): %w", err)
+			}
+			if _, err := s.db.ExecContext(ctx, string(schema)); err != nil {
+				return fmt.Errorf("failed to execute schema (after migrate): %w", err)
+			}
+		} else {
+			return fmt.Errorf("failed to execute schema: %w", err)
+		}
 	}
 
 	// v5.0.1+: 执行迁移添加新字段
@@ -206,6 +221,16 @@ func (s *SQLiteAdapter) migrateSchema(ctx context.Context) error {
 			checkColumn: "cache_creation_1h_cost_usd",
 			alterSQL:    "ALTER TABLE request_logs ADD COLUMN cache_creation_1h_cost_usd REAL DEFAULT 0",
 			description: "1小时缓存创建成本字段",
+		},
+		{
+			checkColumn: "auth_type",
+			alterSQL:    "ALTER TABLE request_logs ADD COLUMN auth_type TEXT DEFAULT ''",
+			description: "认证类型字段（token/api_key）",
+		},
+		{
+			checkColumn: "auth_key",
+			alterSQL:    "ALTER TABLE request_logs ADD COLUMN auth_key TEXT DEFAULT ''",
+			description: "认证标识字段（指纹/别名@指纹）",
 		},
 	}
 
@@ -314,6 +339,32 @@ func (s *SQLiteAdapter) migrateSchema(ctx context.Context) error {
 	}
 	if err := runMigrations("channels", channelMigrations); err != nil {
 		return err
+	}
+
+	// 新增表：按认证维度的用量汇总（不做破坏性迁移）
+	if _, err := s.db.ExecContext(ctx, `
+CREATE TABLE IF NOT EXISTS usage_summary_by_auth (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    date TEXT NOT NULL,
+    model_name TEXT NOT NULL,
+    endpoint_name TEXT NOT NULL,
+    group_name TEXT,
+    auth_type TEXT NOT NULL DEFAULT '',
+    auth_key TEXT NOT NULL DEFAULT '',
+    request_count INTEGER DEFAULT 0,
+    success_count INTEGER DEFAULT 0,
+    error_count INTEGER DEFAULT 0,
+    total_input_tokens INTEGER DEFAULT 0,
+    total_output_tokens INTEGER DEFAULT 0,
+    total_cache_creation_tokens INTEGER DEFAULT 0,
+    total_cache_read_tokens INTEGER DEFAULT 0,
+    total_cost_usd REAL DEFAULT 0,
+    avg_duration_ms REAL DEFAULT 0,
+    created_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00'),
+    updated_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00'),
+    UNIQUE(date, model_name, endpoint_name, group_name, auth_type, auth_key)
+)`); err != nil {
+		return fmt.Errorf("failed to ensure usage_summary_by_auth table: %w", err)
 	}
 
 	return nil

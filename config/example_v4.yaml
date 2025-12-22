@@ -89,7 +89,7 @@ usage_tracking:
   enabled: false
   database:
     type: "sqlite"
-    path: "data/usage.db"
+    path: "data/cc-forwarder.db"
 
   # 🆕 v4.1 热池配置（可选，默认启用）
   # 热池架构将活跃请求保持在内存中，只在完成时写入数据库

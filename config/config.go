@@ -125,7 +125,7 @@ type UsageTrackingConfig struct {
 	Enabled         bool                     `yaml:"enabled"`          // Enable usage tracking, default: false
 
 	// 向后兼容：保留原有的 database_path 配置
-	DatabasePath    string                   `yaml:"database_path"`    // SQLite database file path, default: data/usage.db
+	DatabasePath    string                   `yaml:"database_path"`    // SQLite database file path, default: data/cc-forwarder.db
 
 	// 新增：数据库配置（可选，优先级高于 database_path）
 	Database        *DatabaseBackendConfig   `yaml:"database,omitempty"` // Database configuration (optional)
@@ -401,10 +401,10 @@ func (c *Config) setDefaults() {
 	// Set usage tracking defaults
 	if c.UsageTracking.DatabasePath == "" {
 		// 使用跨平台用户目录作为默认路径
-		// Windows: %APPDATA%\CC-Forwarder\data\usage.db
-		// macOS: ~/Library/Application Support/CC-Forwarder/data/usage.db
-		// Linux: ~/.local/share/cc-forwarder/data/usage.db
-		c.UsageTracking.DatabasePath = filepath.Join(getConfigAppDataDir(), "data", "usage.db")
+		// Windows: %APPDATA%\CC-Forwarder\data\cc-forwarder.db
+		// macOS: ~/Library/Application Support/CC-Forwarder/data/cc-forwarder.db
+		// Linux: ~/.local/share/cc-forwarder/data/cc-forwarder.db
+		c.UsageTracking.DatabasePath = filepath.Join(getConfigAppDataDir(), "data", "cc-forwarder.db")
 	}
 	if c.UsageTracking.BufferSize == 0 {
 		c.UsageTracking.BufferSize = 1000 // Default buffer size

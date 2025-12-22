@@ -304,6 +304,8 @@ type UpdateOptions struct {
 	EndpointName  *string        // 端点名称
 	Channel       *string        // 渠道标签（v5.0）
 	GroupName     *string        // 组名称
+	AuthType      *string        // 认证类型：token/api_key
+	AuthKey       *string        // 认证标识（脱敏/指纹），不含明文
 	Status        *string        // 状态
 	RetryCount    *int           // 重试次数
 	HttpStatus    *int           // HTTP状态码
@@ -551,8 +553,17 @@ func buildDatabaseConfig(config *Config, globalTimezone string) (DatabaseConfig,
 				"reason", "v4.1.0 移除了 MySQL 支持",
 				"suggestion", "请修改配置 type: sqlite 或删除 database.type 配置")
 		}
-		dbConfig.DatabasePath = config.Database.Path
-		dbConfig.Timezone = config.Database.Timezone
+		// 兼容：配置里写了 database 但没写 path 时，回退到 DatabasePath（由上层默认填充为用户目录路径）。
+		if config.Database.Path != "" {
+			dbConfig.DatabasePath = config.Database.Path
+		} else {
+			dbConfig.DatabasePath = config.DatabasePath
+		}
+		if config.Database.Timezone != "" {
+			dbConfig.Timezone = config.Database.Timezone
+		} else {
+			dbConfig.Timezone = globalTimezone
+		}
 	} else {
 		// 向后兼容：使用原有的DatabasePath配置
 		dbConfig.DatabasePath = config.DatabasePath
@@ -769,6 +780,12 @@ func (ut *UsageTracker) RecordRequestUpdate(requestID string, opts UpdateOptions
 			}
 			if opts.GroupName != nil {
 				req.GroupName = *opts.GroupName
+			}
+			if opts.AuthType != nil {
+				req.AuthType = *opts.AuthType
+			}
+			if opts.AuthKey != nil {
+				req.AuthKey = *opts.AuthKey
 			}
 			if opts.Status != nil {
 				req.Status = *opts.Status
@@ -1466,7 +1483,7 @@ func (ut *UsageTracker) ExportToCSV(ctx context.Context, startTime, endTime time
 	}
 
 	// CSV header
-	csv := "request_id,client_ip,user_agent,method,path,start_time,end_time,duration_ms,endpoint_name,group_name,model_name,status,http_status_code,retry_count,input_tokens,output_tokens,cache_creation_tokens,cache_read_tokens,input_cost_usd,output_cost_usd,cache_creation_cost_usd,cache_read_cost_usd,total_cost_usd,created_at,updated_at\n"
+	csv := "request_id,client_ip,user_agent,method,path,start_time,end_time,duration_ms,channel,endpoint_name,group_name,model_name,auth_type,auth_key,status,http_status_code,retry_count,input_tokens,output_tokens,cache_creation_tokens,cache_read_tokens,input_cost_usd,output_cost_usd,cache_creation_cost_usd,cache_read_cost_usd,total_cost_usd,created_at,updated_at\n"
 
 	// CSV rows
 	for _, log := range logs {
@@ -1485,10 +1502,10 @@ func (ut *UsageTracker) ExportToCSV(ctx context.Context, startTime, endTime time
 			httpStatus = fmt.Sprintf("%d", *log.HTTPStatusCode)
 		}
 
-		csv += fmt.Sprintf("%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%d,%d,%d,%d,%d,%.6f,%.6f,%.6f,%.6f,%.6f,%s,%s\n",
+		csv += fmt.Sprintf("%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%d,%d,%d,%d,%d,%.6f,%.6f,%.6f,%.6f,%.6f,%s,%s\n",
 			log.RequestID, log.ClientIP, log.UserAgent, log.Method, log.Path,
 			log.StartTime.Format(time.RFC3339), endTime, durationMs,
-			log.EndpointName, log.GroupName, log.ModelName, log.Status,
+			log.Channel, log.EndpointName, log.GroupName, log.ModelName, log.AuthType, log.AuthKey, log.Status,
 			httpStatus, log.RetryCount,
 			log.InputTokens, log.OutputTokens, log.CacheCreationTokens, log.CacheReadTokens,
 			log.InputCostUSD, log.OutputCostUSD, log.CacheCreationCostUSD, log.CacheReadCostUSD, log.TotalCostUSD,
@@ -1823,6 +1840,8 @@ func (ut *UsageTracker) ActiveRequestToDetail(req *ActiveRequest) RequestDetail 
 		Channel:               req.Channel, // v5.0: 渠道标签
 		GroupName:             req.GroupName,
 		ModelName:             req.ModelName,
+		AuthType:              req.AuthType,
+		AuthKey:               req.AuthKey,
 		IsStreaming:           req.IsStreaming,
 		Status:                req.Status,
 		HTTPStatusCode:        httpStatus,

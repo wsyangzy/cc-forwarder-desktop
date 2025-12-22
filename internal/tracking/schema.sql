@@ -25,6 +25,10 @@ CREATE TABLE IF NOT EXISTS request_logs (
     model_name TEXT,                        -- Claude模型名称
     is_streaming BOOLEAN DEFAULT FALSE,     -- 是否为流式请求
     
+    -- 认证信息（不落明文，用于按 Token/API Key 维度统计）
+    auth_type TEXT DEFAULT '',              -- token / api_key / ''
+    auth_key TEXT DEFAULT '',               -- 指纹或别名@指纹（不可逆）
+    
     -- 状态信息 (v3.5.0更新: 生命周期状态与错误原因分离 - 2025-09-28)
     status TEXT NOT NULL DEFAULT 'pending', -- 生命周期状态: pending/forwarding/processing/retry/suspended/completed/failed/cancelled
     http_status_code INTEGER,               -- HTTP状态码
@@ -68,6 +72,7 @@ CREATE INDEX IF NOT EXISTS idx_request_logs_channel ON request_logs(channel);
 CREATE INDEX IF NOT EXISTS idx_request_logs_endpoint ON request_logs(endpoint_name);
 CREATE INDEX IF NOT EXISTS idx_request_logs_group ON request_logs(group_name);
 CREATE INDEX IF NOT EXISTS idx_request_logs_failure_reason ON request_logs(failure_reason);
+CREATE INDEX IF NOT EXISTS idx_request_logs_auth_key ON request_logs(auth_key);
 
 -- 使用统计汇总表 (可选，用于快速查询)
 CREATE TABLE IF NOT EXISTS usage_summary (
@@ -101,6 +106,39 @@ CREATE INDEX IF NOT EXISTS idx_usage_summary_model ON usage_summary(model_name);
 CREATE INDEX IF NOT EXISTS idx_usage_summary_endpoint ON usage_summary(endpoint_name);
 CREATE INDEX IF NOT EXISTS idx_usage_summary_group ON usage_summary(group_name);
 
+-- 使用统计汇总表（按认证维度，用于区分不同 Token/API Key 的计费统计）
+CREATE TABLE IF NOT EXISTS usage_summary_by_auth (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    date TEXT NOT NULL,                    -- YYYY-MM-DD
+    model_name TEXT NOT NULL,
+    endpoint_name TEXT NOT NULL,
+    group_name TEXT,
+    auth_type TEXT NOT NULL DEFAULT '',
+    auth_key TEXT NOT NULL DEFAULT '',
+    
+    request_count INTEGER DEFAULT 0,
+    success_count INTEGER DEFAULT 0,
+    error_count INTEGER DEFAULT 0,
+    
+    total_input_tokens INTEGER DEFAULT 0,
+    total_output_tokens INTEGER DEFAULT 0,
+    total_cache_creation_tokens INTEGER DEFAULT 0,
+    total_cache_read_tokens INTEGER DEFAULT 0,
+    total_cost_usd REAL DEFAULT 0,
+    
+    avg_duration_ms REAL DEFAULT 0,
+    
+    created_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00'),
+    updated_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00'),
+    
+    UNIQUE(date, model_name, endpoint_name, group_name, auth_type, auth_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_usage_summary_by_auth_date ON usage_summary_by_auth(date);
+CREATE INDEX IF NOT EXISTS idx_usage_summary_by_auth_model ON usage_summary_by_auth(model_name);
+CREATE INDEX IF NOT EXISTS idx_usage_summary_by_auth_endpoint ON usage_summary_by_auth(endpoint_name);
+CREATE INDEX IF NOT EXISTS idx_usage_summary_by_auth_auth_key ON usage_summary_by_auth(auth_key);
+
 -- 触发器：自动更新 updated_at 时间戳（统一使用带时区格式，微秒精度）
 CREATE TRIGGER IF NOT EXISTS update_request_logs_timestamp
     AFTER UPDATE ON request_logs
@@ -116,6 +154,14 @@ CREATE TRIGGER IF NOT EXISTS update_usage_summary_timestamp
     WHEN NEW.updated_at = OLD.updated_at
 BEGIN
     UPDATE usage_summary SET updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00' WHERE id = NEW.id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS update_usage_summary_by_auth_timestamp
+    AFTER UPDATE ON usage_summary_by_auth
+    FOR EACH ROW
+    WHEN NEW.updated_at = OLD.updated_at
+BEGIN
+    UPDATE usage_summary_by_auth SET updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00' WHERE id = NEW.id;
 END;
 
 -- ============================================================================

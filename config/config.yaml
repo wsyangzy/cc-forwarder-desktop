@@ -53,7 +53,7 @@ usage_tracking:
     type: "sqlite"
 
     # # sqlite配置（向后兼容，当type=sqlite时使用）
-    # database_path: "data/usage.db"
+    # database_path: "data/cc-forwarder.db"
 
     # # MySQL配置（当type=mysql时使用）
     # host: "127.0.0.1"

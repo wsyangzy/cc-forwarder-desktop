@@ -112,7 +112,7 @@ token_counting:
 endpoints_storage:
   type: "yaml"                # 存储类型: "yaml" | "sqlite"，默认: "yaml"
                               # 设置为 "sqlite" 后，endpoints 数组将被忽略
-                              # 端点配置从 data/usage.db 的 endpoints 表加载
+                              # 端点配置从 data/cc-forwarder.db 的 endpoints 表加载
 
 # 使用跟踪配置
 # =================================================================
@@ -134,7 +134,7 @@ usage_tracking:
     # 📁 SQLite配置 (开箱即用，无需安装任何外部服务)
     # =================================================================
     type: "sqlite"                        # 数据库类型: 仅支持 "sqlite"
-    path: "data/usage.db"                 # SQLite数据库文件路径
+    path: "data/cc-forwarder.db"          # SQLite数据库文件路径
     timezone: "Asia/Shanghai"             # 时区配置，留空则继承全局时区
 
     # 💡 SQLite说明:
