@@ -358,7 +358,7 @@ func (s *SettingsService) getDefaultsForCategory(category string) []*store.Setti
 
 	case CategoryStrategy:
 		return []*store.SettingRecord{
-			{Category: CategoryStrategy, Key: "type", Value: "priority", ValueType: ValueTypeString, Label: "策略类型", Description: "路由策略: priority (优先级) 或 fastest (最快响应)", DisplayOrder: 1},
+			{Category: CategoryStrategy, Key: "type", Value: "priority", ValueType: ValueTypeString, Label: "策略类型", Description: "路由策略：priority（优先级）或 fastest（最快响应）。渠道内用于端点选择；启用渠道间故障转移时，渠道间也按该策略选择目标渠道。", DisplayOrder: 1},
 			{Category: CategoryStrategy, Key: "fast_test_enabled", Value: "true", ValueType: ValueTypeBool, Label: "启用快速测试", Description: "仅在 fastest 策略下生效", DisplayOrder: 2},
 			{Category: CategoryStrategy, Key: "fast_test_cache_ttl", Value: "3s", ValueType: ValueTypeDuration, Label: "缓存时间", Description: "快速测试结果缓存时间", DisplayOrder: 3},
 			{Category: CategoryStrategy, Key: "fast_test_timeout", Value: "1s", ValueType: ValueTypeDuration, Label: "测试超时", Description: "快速测试超时时间", DisplayOrder: 4},
@@ -382,7 +382,7 @@ func (s *SettingsService) getDefaultsForCategory(category string) []*store.Setti
 
 	case CategoryFailover:
 		return []*store.SettingRecord{
-			{Category: CategoryFailover, Key: "enabled", Value: "true", ValueType: ValueTypeBool, Label: "启用渠道间故障转移", Description: "当当前渠道内所有端点均重试耗尽时，自动切换到备用渠道。渠道内端点切换默认开启，可通过端点「参与故障转移」关闭。", DisplayOrder: 1},
+			{Category: CategoryFailover, Key: "enabled", Value: "true", ValueType: ValueTypeBool, Label: "启用渠道间故障转移", Description: "当当前渠道内所有端点均重试耗尽时，自动切换到备用渠道。渠道内端点切换默认开启，可通过端点「参与渠道内故障转移」关闭。备用渠道的选择遵循「路由策略」并跳过暂停/冷却渠道。", DisplayOrder: 1},
 			{Category: CategoryFailover, Key: "default_cooldown", Value: "600s", ValueType: ValueTypeDuration, Label: "默认冷却时间", Description: "请求级故障转移触发后，失败端点/失败渠道进入冷却的等待时间", DisplayOrder: 2},
 		}
 

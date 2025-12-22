@@ -10,7 +10,9 @@ server:
   host: "0.0.0.0"      # Docker环境中监听所有接口，默认: localhost
   port: 8087             # 监听端口，默认: 8080
 
-# 路由策略配置(适用于组内)
+# 路由策略配置
+# - 渠道内：决定端点选择/排序（priority=按端点优先级；fastest=按响应时间）
+# - 渠道间：仅在启用「渠道间故障转移」时生效（priority=按渠道优先级；fastest=按各渠道内最佳端点响应时间）
 strategy:
   type: "fastest"                  # 路由策略: "priority" (优先级) 或 "fastest" (最快响应)
   fast_test_enabled: true          # 启用快速测试 (仅在 fastest 策略下生效)
