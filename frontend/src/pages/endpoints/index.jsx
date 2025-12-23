@@ -1430,14 +1430,19 @@ const EndpointsPage = () => {
       <div className="animate-fade-in">
       {/* 页面标题 */}
       <div className="flex justify-between items-end mb-8">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">渠道管理</h1>
-          <p className="text-slate-500 text-sm mt-1">
-            以渠道为单位进行路由与故障转移，渠道内优先在端点之间切换，渠道耗尽后跨渠道切换
-            {lastUpdate && (
-              <span className="ml-2 text-slate-400">· 更新于 {lastUpdate}</span>
-            )}
-          </p>
+        <div className="flex items-center gap-3">
+          <div className="p-2 bg-slate-900 rounded-lg text-white shadow-lg">
+            <ArrowRightLeft className="w-6 h-6" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-bold text-slate-900">渠道管理</h1>
+            <p className="text-slate-500 text-sm mt-1">
+              以渠道为单位进行路由与故障转移，渠道内优先在端点之间切换，渠道耗尽后跨渠道切换
+              {lastUpdate && (
+                <span className="ml-2 text-slate-400">· 更新于 {lastUpdate}</span>
+              )}
+            </p>
+          </div>
         </div>
         <div className="flex items-center gap-3">
           {/* SSE 状态指示器 */}
