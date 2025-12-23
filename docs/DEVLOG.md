@@ -5,7 +5,7 @@
 本文件用于记录本轮“端点 → 渠道（channel）”重构及相关优化的**详细实现**，便于后续继续迭代、排查回归与快速定位代码。
 
 起始基线：`25e801c8ddf9b2be5c683dd4221e888477dbb8f3`（tag: `v5.1.0`）  
-当前 HEAD：`c84a4a7`（建议发布为 `v6.0.0`）  
+当前 HEAD：`c84a4a7`（建议发布为 `v6.0.1`）  
 合并节点：`919e510 Merge branch 'feat/channel-priority'`
 
 ---
@@ -158,6 +158,18 @@
   - 当渠道仍有端点时，提示“该渠道下仍有 N 个端点；确认删除将级联删除端点并删除渠道”
   - 取消了多余的“勾选才删除端点”选项
 
+### 3.5 页面标题区 UI 统一（图标 + 标题 + 副标题）
+
+背景：请求追踪/系统日志/系统设置标题旁有图标，但其他页面缺失，且系统日志标题区的图标与文案对齐不一致。
+
+处理：统一所有主要页面的标题区样式：左侧固定图标块 + 右侧标题/副标题文本，保证视觉一致性与对齐。
+
+实现落点：
+- `frontend/src/pages/log-viewer/index.jsx`：调整标题结构，确保“系统日志”与“实时查看系统运行日志 · 共 N 条”同一垂直线对齐，并统一图标块样式。
+- `frontend/src/pages/overview/index.jsx`：概览页补齐标题图标与统一布局。
+- `frontend/src/pages/pricing/index.jsx`：基础定价页补齐标题图标与统一布局。
+- `frontend/src/pages/endpoints/index.jsx`：渠道管理页补齐标题图标与统一布局。
+
 ### 3.2 端点详情弹窗（美化 + 实用性）
 
 实现落点：`frontend/src/pages/endpoints/index.jsx`（`EndpointDetailModal`）
@@ -169,6 +181,7 @@
   - 提供“复制原始值”的小图标按钮（仅原始值存在时可点）
 - 布局：
   - 冷却(s) 与 Token（脱敏）保持同一行的双列卡片布局（小窗口自动换行）
+  - 当端点未配置独立冷却(s)时，详情中展示“全局默认冷却时间”（避免显示 `-` 造成误解）
 
 ### 3.3 端点表单（新建/编辑）
 
@@ -373,6 +386,18 @@
 - 代表文件：
   - `internal/service/settings.go`
   - `frontend/src/pages/settings/components/SettingItem.jsx`
+
+### 7.11 fix(sqlite): 规避 SQLITE_BUSY 导致设置/定价空白
+- 现象：运行一段时间后，设置页偶发报错 `database is locked (SQLITE_BUSY)`；模型定价页面可能显示为空。
+- 根因：SQLite 的 `VACUUM` 属于强锁操作（Windows 上尤甚），在后台自动执行时会把其它连接的读写顶成 `SQLITE_BUSY`。
+- 怎么做：
+  - 停止在“定期清理”流程中自动执行 `VACUUM`（按需再提供手动维护入口，避免运行时锁库）。
+  - 管理侧查询加入轻量 `SQLITE_BUSY` 重试（在 ctx 允许的时间内退避等待，避免 UI 直接变空）。
+- 代表文件：
+  - `internal/tracking/database.go`
+  - `internal/store/sqlite_busy_retry.go`
+  - `internal/store/settings.go`
+  - `internal/store/model_pricing.go`
 
 ---
 

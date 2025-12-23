@@ -164,6 +164,7 @@ export namespace main {
 	    proxy_enabled: boolean;
 	    tracking_enabled: boolean;
 	    failover_enabled: boolean;
+	    failover_default_cooldown_seconds: number;
 	    endpoint_count: number;
 	
 	    static createFrom(source: any = {}) {
@@ -178,6 +179,7 @@ export namespace main {
 	        this.proxy_enabled = source["proxy_enabled"];
 	        this.tracking_enabled = source["tracking_enabled"];
 	        this.failover_enabled = source["failover_enabled"];
+	        this.failover_default_cooldown_seconds = source["failover_default_cooldown_seconds"];
 	        this.endpoint_count = source["endpoint_count"];
 	    }
 	}

@@ -14,7 +14,7 @@
   "info": {
     "companyName": "Claude Request Forwarder",
     "productName": "Claude Request Forwarder",
-    "productVersion": "6.0.0",
+    "productVersion": "6.0.1",
     "copyright": "Copyright © 2025 CC-Forwarder",
     "comments": "Claude Request Forwarder 本地代理转发服务"
   }

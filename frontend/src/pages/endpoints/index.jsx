@@ -357,6 +357,7 @@ const EndpointDetailModal = ({
   endpoint,
   isOpen,
   isSqliteMode,
+  failoverDefaultCooldownSeconds = 600,
   onClose,
   onEdit,
   onDelete
@@ -388,7 +389,9 @@ const EndpointDetailModal = ({
     { label: '超时(s)', value: endpoint.timeoutSeconds ?? endpoint.timeout_seconds ?? '-' },
   ];
 
-  const cooldownSeconds = endpoint.cooldownSeconds ?? endpoint.cooldown_seconds ?? '-';
+  const endpointCooldownSeconds = endpoint.cooldownSeconds ?? endpoint.cooldown_seconds;
+  const cooldownUsesGlobal = endpointCooldownSeconds == null;
+  const cooldownSeconds = endpointCooldownSeconds ?? failoverDefaultCooldownSeconds ?? '-';
   const hasToken = !!(tokenRaw || tokenMasked);
   const hasApiKey = !!(apiKeyRaw || apiKeyMasked);
 
@@ -505,7 +508,14 @@ const EndpointDetailModal = ({
 
           <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="bg-slate-50 rounded-xl p-3 border border-slate-200/60">
-              <div className="text-xs text-slate-500 mb-1">冷却(s)</div>
+              <div className="flex items-center justify-between mb-1">
+                <div className="text-xs text-slate-500">冷却(s)</div>
+                {cooldownUsesGlobal && (
+                  <span className="text-[10px] text-slate-400 bg-white/70 px-2 py-0.5 rounded border border-slate-200">
+                    全局默认
+                  </span>
+                )}
+              </div>
               <div className="text-sm font-semibold text-slate-900 break-all">
                 {String(cooldownSeconds)}
               </div>
@@ -964,6 +974,7 @@ const EndpointsPage = () => {
   const [groups, setGroups] = useState([]);
   const [channelActionLoading, setChannelActionLoading] = useState(false);
   const [channelFailoverEnabled, setChannelFailoverEnabled] = useState(true);
+  const [failoverDefaultCooldownSeconds, setFailoverDefaultCooldownSeconds] = useState(600);
   const [channelsMeta, setChannelsMeta] = useState([]);
 
   // 批量检测状态
@@ -1078,10 +1089,15 @@ const EndpointsPage = () => {
       const cfg = await getConfig();
       if (seq !== configLoadSeqRef.current) return;
       setChannelFailoverEnabled(cfg?.failover_enabled !== false);
+      const cooldownSeconds = Number(cfg?.failover_default_cooldown_seconds);
+      setFailoverDefaultCooldownSeconds(
+        Number.isFinite(cooldownSeconds) && cooldownSeconds > 0 ? cooldownSeconds : 600
+      );
     } catch (err) {
       console.error('获取配置失败:', err);
       if (seq !== configLoadSeqRef.current) return;
       setChannelFailoverEnabled(true);
+      setFailoverDefaultCooldownSeconds(600);
     }
   }, []);
 
@@ -1735,6 +1751,7 @@ const EndpointsPage = () => {
         endpoint={detailTarget}
         isOpen={detailOpen}
         isSqliteMode={isSqliteMode}
+        failoverDefaultCooldownSeconds={failoverDefaultCooldownSeconds}
         onClose={closeEndpointDetail}
         onEdit={(ep) => {
           closeEndpointDetail();

@@ -766,8 +766,9 @@ func (a *App) setupStoreDB() {
 		}
 	}
 
-	// 使用适中的 busy_timeout：降低“瞬时锁争用”带来的偶发失败，同时由上层 ctx 超时控制整体等待。
-	dsn := dbPath + "?_journal_mode=WAL&_synchronous=NORMAL&_cache_size=10000&_foreign_keys=1&_busy_timeout=10000"
+	// 使用较长 busy_timeout：管理侧读写应尽量避免 SQLITE_BUSY；上层仍用 ctx 控制总体等待时间。
+	// 注意：写冲突时 SQLite 仍只有一个 writer，该超时只是让管理侧在短暂争用时更耐心等待。
+	dsn := dbPath + "?_journal_mode=WAL&_synchronous=NORMAL&_cache_size=10000&_foreign_keys=1&_busy_timeout=60000"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		a.logger.Warn("⚠️ 初始化管理数据库连接失败", "error", err)

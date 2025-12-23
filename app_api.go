@@ -135,6 +135,8 @@ type ConfigInfo struct {
 	ProxyEnabled    bool   `json:"proxy_enabled"`
 	TrackingEnabled bool   `json:"tracking_enabled"`
 	FailoverEnabled bool   `json:"failover_enabled"`
+	// FailoverDefaultCooldownSeconds 全局默认冷却时间（秒），用于前端在端点未设置专属冷却时展示“实际生效值”。
+	FailoverDefaultCooldownSeconds int `json:"failover_default_cooldown_seconds"`
 	EndpointCount   int    `json:"endpoint_count"`
 }
 
@@ -154,6 +156,12 @@ func (a *App) GetConfig() ConfigInfo {
 		ProxyEnabled:    a.config.Proxy.Enabled,
 		TrackingEnabled: a.config.UsageTracking.Enabled,
 		FailoverEnabled: a.config.Failover.Enabled,
+		FailoverDefaultCooldownSeconds: func() int {
+			if a.config.Failover.DefaultCooldown > 0 {
+				return int(a.config.Failover.DefaultCooldown.Seconds())
+			}
+			return 600
+		}(),
 		EndpointCount:   len(a.config.Endpoints),
 	}
 }

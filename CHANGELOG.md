@@ -5,6 +5,20 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 项目遵循 [语义化版本控制](https://semver.org/lang/zh-CN/)。
 
+## [6.0.1] - 2025-12-23
+
+### 🐛 Bug 修复 (Bug Fixes)
+
+- **SQLite schema 兼容性**: 修复旧库缺列时初始化失败导致“历史数据读不到”的问题
+
+### 🎨 界面与体验 (UI/UX)
+
+- **页面标题区统一**: 概览/渠道管理/基础定价/系统日志等页面统一标题图标与对齐布局
+
+### 🔧 清理 (Chore)
+
+- **移除冗余的按 Token 统计方案**: 不再引入按 token/API key 聚合统计维度（以端点为准）
+
 ## [6.0.0] - 2025-12-22
 
 ### 🚀 重大变更 (Breaking Changes)

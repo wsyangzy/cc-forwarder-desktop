@@ -420,7 +420,9 @@ func (s *SQLiteSettingsStore) ListCategories(ctx context.Context) ([]string, err
 
 // scanSettings 扫描多个设置记录
 func (s *SQLiteSettingsStore) scanSettings(ctx context.Context, query string, args ...interface{}) ([]*SettingRecord, error) {
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	rows, err := queryRowsWithSQLiteBusyRetry(ctx, func() (*sql.Rows, error) {
+		return s.db.QueryContext(ctx, query, args...)
+	})
 	if err != nil {
 		return nil, fmt.Errorf("查询设置失败: %w", err)
 	}
