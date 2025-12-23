@@ -101,7 +101,7 @@ const SettingsPage = () => {
         setExpandedCategories(new Set(categoriesData.map(c => c.name)));
       }
     } catch (err) {
-      setError(err.message || '加载设置失败');
+      setError(err?.message || String(err) || '加载设置失败');
     } finally {
       setLoading(false);
     }

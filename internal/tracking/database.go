@@ -532,6 +532,7 @@ func (ut *UsageTracker) buildFlexibleUpdateQuery(event RequestEvent) (string, []
 
 // buildSuccessQuery 构建成功完成的查询
 // 一次性更新所有成功相关字段：status='completed', end_time, duration_ms, Token和成本信息
+// 🔧 [方案A补充] 2025-12-20: 增加 failure_reason 写入支持
 func (ut *UsageTracker) buildSuccessQuery(event RequestEvent) (string, []interface{}, error) {
 	data, ok := event.Data.(RequestCompleteData)
 	if !ok {
@@ -548,6 +549,7 @@ func (ut *UsageTracker) buildSuccessQuery(event RequestEvent) (string, []interfa
 
 	inputCost, outputCost, cacheCost, readCost, totalCost := ut.calculateCost(data.ModelName, tokens)
 
+	// 🔧 [方案A补充] 支持 failure_reason 写入（用于数据质量标记，如 stream_truncated）
 	query := fmt.Sprintf(`UPDATE request_logs SET
 		end_time = ?,
 		duration_ms = ?,
@@ -561,6 +563,7 @@ func (ut *UsageTracker) buildSuccessQuery(event RequestEvent) (string, []interfa
 		cache_creation_cost_usd = ?,
 		cache_read_cost_usd = ?,
 		total_cost_usd = ?,
+		failure_reason = ?,
 		http_status_code = CASE WHEN http_status_code IS NULL OR http_status_code = 0 THEN 200 ELSE http_status_code END,
 		status = 'completed',
 		updated_at = %s
@@ -579,6 +582,7 @@ func (ut *UsageTracker) buildSuccessQuery(event RequestEvent) (string, []interfa
 		cacheCost,
 		readCost,
 		totalCost,
+		data.FailureReason, // 🔧 [方案A补充] 写入 failure_reason（可为空）
 		event.RequestID,
 	}
 
@@ -1069,25 +1073,10 @@ func (ut *UsageTracker) cleanupOldRecords() error {
 	}
 
 	// 运行VACUUM以回收空间（通过写队列，仅对SQLite有效）
-	if ut.adapter.GetDatabaseType() == "sqlite" {
-		vacuumWriteReq := WriteRequest{
-			Query:     "VACUUM",
-			Args:      []interface{}{},
-			Response:  make(chan error, 1),
-			Context:   context.Background(),
-			EventType: "vacuum",
-		}
-
-		select {
-		case ut.writeQueue <- vacuumWriteReq:
-			err := <-vacuumWriteReq.Response
-			if err != nil {
-				slog.Warn("Failed to vacuum database after cleanup", "error", err)
-			}
-		case <-ut.ctx.Done():
-			return ut.ctx.Err()
-		}
-	}
+	// 说明：
+	// VACUUM 会获取较强的锁（Windows 上尤甚），会导致管理/UI 侧读写出现 SQLITE_BUSY。
+	// 对于桌面端运行时，定期 cleanup 已足够，自动 VACUUM 属于“收益小但风险大”的操作（YAGNI）。
+	// 如需回收空间，请后续考虑在“手动维护/诊断”入口中按需触发。
 
 	// 记录清理结果
 	slog.Info("Cleaned up old records",

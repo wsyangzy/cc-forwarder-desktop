@@ -69,7 +69,7 @@ export const STATUS_CONFIG = {
     color: 'bg-amber-100 text-amber-700 border-amber-200'
   },
   [REQUEST_STATUS.SUSPENDED]: {
-    label: '挂起',
+    label: '已挂起',
     icon: 'Pause',
     color: 'bg-slate-100 text-slate-700 border-slate-200'
   },
@@ -79,12 +79,12 @@ export const STATUS_CONFIG = {
     color: 'bg-emerald-100 text-emerald-700 border-emerald-200'
   },
   [REQUEST_STATUS.FAILED]: {
-    label: '失败',
+    label: '已失败',
     icon: 'XCircle',
     color: 'bg-rose-100 text-rose-700 border-rose-200'
   },
   [REQUEST_STATUS.ERROR]: {
-    label: '失败',
+    label: '已失败',
     icon: 'XCircle',
     color: 'bg-rose-100 text-rose-700 border-rose-200'
   },
@@ -94,7 +94,7 @@ export const STATUS_CONFIG = {
     color: 'bg-slate-100 text-slate-700 border-slate-200'
   },
   [REQUEST_STATUS.TIMEOUT]: {
-    label: '超时',
+    label: '已超时',
     icon: 'Timer',
     color: 'bg-slate-100 text-slate-700 border-slate-200'
   }
@@ -107,9 +107,9 @@ export const FILTER_STATUS_OPTIONS = [
   { value: 'forwarding', label: '转发中' },
   { value: 'processing', label: '处理中' },
   { value: 'retry', label: '重试中' },
-  { value: 'suspended', label: '挂起' },
+  { value: 'suspended', label: '已挂起' },
   { value: 'completed', label: '已完成' },
-  { value: 'failed', label: '失败' },
+  { value: 'failed', label: '已失败' },
   { value: 'cancelled', label: '已取消' }
 ];
 

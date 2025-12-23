@@ -10,9 +10,9 @@ export const STATUS_OPTIONS = {
   forwarding: '转发中',
   processing: '处理中',
   retry: '重试中',
-  suspended: '挂起',
+  suspended: '已挂起',
   completed: '已完成',
-  failed: '失败',
+  failed: '已失败',
   cancelled: '已取消'
 };
 

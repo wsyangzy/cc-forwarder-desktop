@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"cc-forwarder/config"
 	"cc-forwarder/internal/endpoint"
 	"cc-forwarder/internal/monitor"
 	"cc-forwarder/internal/tracking"
@@ -219,6 +220,8 @@ type SuspensionManager interface {
 	// 🎯 [挂起取消区分] 新增带结果的端点恢复等待方法，能区分成功/超时/取消
 	WaitForEndpointRecoveryWithResult(ctx context.Context, connID, failedEndpoint string) SuspensionResult
 	GetSuspendedRequestsCount() int
+	// 🔧 [热更新] 更新配置
+	UpdateConfig(cfg *config.Config)
 }
 
 // GetDefaultStatusCodeForFinalStatus 根据最终状态获取默认HTTP状态码

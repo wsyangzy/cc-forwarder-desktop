@@ -642,11 +642,16 @@ const PricingPage = () => {
     <div className="animate-fade-in">
       {/* 页面标题 */}
       <div className="flex justify-between items-end mb-8">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">基础定价</h1>
-          <p className="text-slate-500 text-sm mt-1">
-            管理 Claude 模型的基础定价配置 (USD per 1M tokens)
-          </p>
+        <div className="flex items-center gap-3">
+          <div className="p-2 bg-slate-900 rounded-lg text-white shadow-lg">
+            <DollarSign className="w-6 h-6" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-bold text-slate-900">基础定价</h1>
+            <p className="text-slate-500 text-sm mt-1">
+              管理 Claude 模型的基础定价配置 (USD per 1M tokens)
+            </p>
+          </div>
         </div>
         <div className="flex items-center gap-3">
           {/* 存储状态 - 已隐藏 */}

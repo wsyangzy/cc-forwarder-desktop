@@ -285,6 +285,7 @@ func (eh *ErrorHandler) performSimpleBackup(ctx context.Context, backupDB *sql.D
 		start_time DATETIME NOT NULL,
 		end_time DATETIME,
 		duration_ms INTEGER,
+		channel TEXT DEFAULT '',
 		endpoint_name TEXT,
 		group_name TEXT,
 		model_name TEXT,
@@ -345,6 +346,7 @@ func (eh *ErrorHandler) performSimpleBackup(ctx context.Context, backupDB *sql.D
 		       COALESCE(method, 'POST') as method, 
 		       COALESCE(path, '/v1/messages') as path, 
 		       start_time, end_time, duration_ms,
+			   COALESCE(channel, '') as channel,
 			   COALESCE(endpoint_name, '') as endpoint_name, 
 			   COALESCE(group_name, '') as group_name, 
 			   COALESCE(model_name, '') as model_name, 
@@ -362,11 +364,11 @@ func (eh *ErrorHandler) performSimpleBackup(ctx context.Context, backupDB *sql.D
 	stmt, err := backupDB.PrepareContext(ctx, `
 		INSERT INTO request_logs (
 			request_id, client_ip, user_agent, method, path, start_time, end_time, duration_ms,
-			endpoint_name, group_name, model_name, status, http_status_code, retry_count,
+			channel, endpoint_name, group_name, model_name, status, http_status_code, retry_count,
 			input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
 			input_cost_usd, output_cost_usd, cache_creation_cost_usd, cache_read_cost_usd,
 			total_cost_usd, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		return fmt.Errorf("failed to prepare insert statement: %w", err)
@@ -378,8 +380,9 @@ func (eh *ErrorHandler) performSimpleBackup(ctx context.Context, backupDB *sql.D
 		var r RequestDetail
 		err := rows.Scan(
 			&r.RequestID, &r.ClientIP, &r.UserAgent, &r.Method, &r.Path,
-			&r.StartTime, &r.EndTime, &r.DurationMs, &r.EndpointName, &r.GroupName,
-			&r.ModelName, &r.Status, &r.HTTPStatusCode, &r.RetryCount,
+			&r.StartTime, &r.EndTime, &r.DurationMs, &r.Channel,
+			&r.EndpointName, &r.GroupName, &r.ModelName,
+			&r.Status, &r.HTTPStatusCode, &r.RetryCount,
 			&r.InputTokens, &r.OutputTokens, &r.CacheCreationTokens, &r.CacheReadTokens,
 			&r.InputCostUSD, &r.OutputCostUSD, &r.CacheCreationCostUSD, &r.CacheReadCostUSD,
 			&r.TotalCostUSD, &r.CreatedAt, &r.UpdatedAt,
@@ -390,8 +393,9 @@ func (eh *ErrorHandler) performSimpleBackup(ctx context.Context, backupDB *sql.D
 
 		_, err = stmt.ExecContext(ctx,
 			r.RequestID, r.ClientIP, r.UserAgent, r.Method, r.Path,
-			r.StartTime, r.EndTime, r.DurationMs, r.EndpointName, r.GroupName,
-			r.ModelName, r.Status, r.HTTPStatusCode, r.RetryCount,
+			r.StartTime, r.EndTime, r.DurationMs, r.Channel,
+			r.EndpointName, r.GroupName, r.ModelName,
+			r.Status, r.HTTPStatusCode, r.RetryCount,
 			r.InputTokens, r.OutputTokens, r.CacheCreationTokens, r.CacheReadTokens,
 			r.InputCostUSD, r.OutputCostUSD, r.CacheCreationCostUSD, r.CacheReadCostUSD,
 			r.TotalCostUSD, r.CreatedAt, r.UpdatedAt,

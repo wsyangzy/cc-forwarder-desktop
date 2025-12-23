@@ -356,9 +356,9 @@ func (am *ArchiveManager) batchInsert(events []*ArchiveEvent) error {
 			req.CacheReadTokens,
 			costBreakdown.InputCost,
 			costBreakdown.OutputCost,
-			costBreakdown.CacheCreationCost,    // 总成本（向后兼容）
-			costBreakdown.CacheCreation5mCost,  // 5分钟缓存成本
-			costBreakdown.CacheCreation1hCost,  // 1小时缓存成本
+			costBreakdown.CacheCreationCost,   // 总成本（向后兼容）
+			costBreakdown.CacheCreation5mCost, // 5分钟缓存成本
+			costBreakdown.CacheCreation1hCost, // 1小时缓存成本
 			costBreakdown.CacheReadCost,
 			costBreakdown.TotalCost,
 		)

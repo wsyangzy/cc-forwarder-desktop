@@ -137,7 +137,7 @@ func (a *App) GetAllSettings() ([]SettingInfo, error) {
 	a.mu.RUnlock()
 
 	if settingsService == nil {
-		return nil, fmt.Errorf("设置服务未启用 (需要设置 usage_tracking.enabled: true)")
+		return nil, fmt.Errorf("设置服务未启用")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

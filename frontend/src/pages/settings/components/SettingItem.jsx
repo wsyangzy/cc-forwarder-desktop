@@ -4,7 +4,7 @@
 // ============================================
 
 import { useState, useEffect } from 'react';
-import { AlertTriangle } from 'lucide-react';
+import { AlertTriangle, Eye, EyeOff } from 'lucide-react';
 import { CustomSelect } from '../../../components/ui';
 
 // 值类型到输入类型的映射
@@ -30,6 +30,7 @@ const SettingItem = ({
   disabled = false
 }) => {
   const [localValue, setLocalValue] = useState(value);
+  const [showSecret, setShowSecret] = useState(false);
 
   // 同步外部 value 变化
   useEffect(() => {
@@ -134,6 +135,57 @@ const SettingItem = ({
     );
   }
 
+  // 密码类型（脱敏展示 + 可切换显示）
+  if (valueType === 'password') {
+    return (
+      <div className="flex justify-between items-center py-3 border-b border-slate-100 last:border-0">
+        <div className="flex-1 min-w-0 pr-4">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-medium text-slate-700">{displayLabel}</span>
+            {setting.requires_restart && (
+              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-700">
+                <AlertTriangle size={10} className="mr-0.5" />
+                重启生效
+              </span>
+            )}
+          </div>
+          {setting.description && (
+            <p className="text-xs text-slate-400 mt-0.5">{setting.description}</p>
+          )}
+        </div>
+
+        <div className={`relative ${setting.key === 'token' ? 'w-80' : 'w-32'}`}>
+          <input
+            type={showSecret ? 'text' : 'password'}
+            value={localValue}
+            onChange={handleChange}
+            disabled={disabled}
+            placeholder={config.placeholder}
+            className={`
+              w-full px-3 py-1.5 pr-9 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-700
+              font-mono text-left
+              focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500
+              ${disabled ? 'opacity-50 cursor-not-allowed' : ''}
+            `}
+          />
+          <button
+            type="button"
+            onClick={() => setShowSecret(v => !v)}
+            disabled={disabled}
+            className={`
+              absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-md transition-colors
+              ${disabled ? 'text-slate-300 cursor-not-allowed' : 'text-slate-400 hover:text-indigo-600 hover:bg-white/70'}
+            `}
+            title={showSecret ? '隐藏' : '显示'}
+            aria-label={showSecret ? '隐藏' : '显示'}
+          >
+            {showSecret ? <EyeOff size={16} /> : <Eye size={16} />}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   // 其他类型使用文本/数字输入框
   return (
     <div className="flex justify-between items-center py-3 border-b border-slate-100 last:border-0">
@@ -163,7 +215,7 @@ const SettingItem = ({
           font-mono text-right
           focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500
           ${disabled ? 'opacity-50 cursor-not-allowed' : ''}
-          ${setting.key === 'token' ? 'w-48' : ''}
+          ${setting.key === 'token' ? 'w-80' : ''}
         `}
       />
     </div>

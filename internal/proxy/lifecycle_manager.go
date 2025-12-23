@@ -306,22 +306,59 @@ func (rlm *RequestLifecycleManager) CompleteRequest(tokens *tracking.TokenUsage)
 
 // CompleteRequestWithQuality 完成请求并标记数据质量问题
 // 🆕 [流完整性追踪] 2025-12-11
+// 🔧 [方案A实现] 2025-12-20: 原子操作，在 CompleteAndArchive 中一次性设置所有字段包括 failureReason
 // 用于处理流不完整但已完成的请求，记录 failure_reason 以标记数据质量问题
 // 参数:
 //   - tokens: Token使用统计
 //   - failureReason: 数据质量问题标识（如 "incomplete_stream", "stream_truncated"）
 func (rlm *RequestLifecycleManager) CompleteRequestWithQuality(tokens *tracking.TokenUsage, failureReason string) {
-	// 先执行正常的完成流程
-	rlm.CompleteRequest(tokens)
+	duration := time.Since(rlm.startTime)
 
-	// 如果有质量问题，更新 failure_reason
-	if failureReason != "" && rlm.usageTracker != nil && rlm.requestID != "" {
-		opts := tracking.UpdateOptions{
-			FailureReason: &failureReason,
-		}
-		rlm.usageTracker.RecordRequestUpdate(rlm.requestID, opts)
-		slog.Warn(fmt.Sprintf("⚠️ [数据质量标记] [%s] failure_reason=%s", rlm.requestID, failureReason))
+	// 🚀 [端点自愈] 无论usageTracker是否为空，都应该广播端点成功信号
+	if rlm.recoverySignalManager != nil && rlm.endpointName != "" {
+		rlm.recoverySignalManager.BroadcastEndpointSuccess(rlm.endpointName)
 	}
+
+	if rlm.usageTracker != nil && rlm.requestID != "" {
+		modelName := rlm.GetModelName()
+		if modelName == "" {
+			modelName = "unknown"
+		}
+
+		// 同时记录到监控中间件
+		if rlm.monitoringMiddleware != nil && tokens != nil {
+			monitorTokens := &monitor.TokenUsage{
+				InputTokens:         tokens.InputTokens,
+				OutputTokens:        tokens.OutputTokens,
+				CacheCreationTokens: tokens.CacheCreationTokens,
+				CacheReadTokens:     tokens.CacheReadTokens,
+			}
+			rlm.monitoringMiddleware.RecordTokenUsage(rlm.requestID, rlm.endpointName, monitorTokens)
+		}
+
+		// 日志记录
+		if tokens != nil {
+			totalTokens := tokens.InputTokens + tokens.OutputTokens
+			cacheTokens := tokens.CacheCreationTokens + tokens.CacheReadTokens
+			slog.Info(fmt.Sprintf("✅ [请求完成] [%s] 端点: %s (总尝试 %d 个端点)",
+				rlm.requestID, rlm.endpointName, rlm.retryCount+1))
+			slog.Info(fmt.Sprintf("📊 [Token统计] [%s] 模型: %s, 输入[%d] 输出[%d] 总计[%d] 缓存[%d], 耗时: %dms",
+				rlm.requestID, modelName, tokens.InputTokens, tokens.OutputTokens,
+				totalTokens, cacheTokens, duration.Milliseconds()))
+		}
+
+		// 🔧 [方案A核心] 使用 RecordRequestSuccessWithQuality 一次性完成所有字段设置
+		// 包括 status、tokens、duration 和 failureReason，避免两次独立操作的时序问题
+		rlm.usageTracker.RecordRequestSuccessWithQuality(rlm.requestID, modelName, tokens, duration, failureReason)
+
+		if failureReason != "" {
+			slog.Warn(fmt.Sprintf("⚠️ [数据质量标记] [%s] failure_reason=%s", rlm.requestID, failureReason))
+		}
+		slog.Info(fmt.Sprintf("✅ Request completed [%s]", rlm.requestID))
+	}
+
+	// 调用统一的状态通知方法
+	rlm.notifyStatusChange("completed", rlm.retryCount, 200)
 }
 
 // HandleNonTokenResponse 处理非Token响应的Fallback机制

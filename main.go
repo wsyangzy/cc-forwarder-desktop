@@ -27,7 +27,7 @@ import (
 
 // 版本信息
 var (
-	Version   = "5.0.0"
+	Version   = "6.0.1"
 	Commit    = "unknown"
 	BuildTime = "unknown"
 )
@@ -64,7 +64,7 @@ func main() {
 
 	// 处理版本标志
 	if *showVersion {
-		fmt.Printf("CC-Forwarder Desktop\n")
+		fmt.Printf("Claude Request Forwarder\n")
 		fmt.Printf("Version: %s\n", Version)
 		fmt.Printf("Commit: %s\n", Commit)
 		fmt.Printf("Built: %s\n", BuildTime)

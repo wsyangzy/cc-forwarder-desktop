@@ -11,6 +11,8 @@ import (
 	"cc-forwarder/config"
 	"cc-forwarder/internal/endpoint"
 	"cc-forwarder/internal/tracking"
+
+	"github.com/google/uuid"
 )
 
 // StreamingHandler 流式请求处理器
@@ -64,6 +66,79 @@ type noOpFlusher struct{}
 
 func (f *noOpFlusher) Flush() {
 	// 不执行任何操作，避免panic但保持流式处理逻辑
+}
+
+// sendAnthropicRetryableError 发送 Anthropic API 标准格式的可重试错误事件
+// 使用 overloaded_error 类型，Claude Code 等客户端会识别并自动重试
+func sendAnthropicRetryableError(w http.ResponseWriter, flusher http.Flusher, message string) {
+	// 发送 SSE 格式的 error 事件
+	// 格式: event: error\ndata: {"type":"error","error":{"type":"xxx","message":"xxx"}}\n\n
+	fmt.Fprintf(w, "event: error\n")
+	fmt.Fprintf(w, "data: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"%s\"}}\n\n",
+		escapeJSONString(message))
+	flusher.Flush()
+}
+
+// sendStreamInterruptedMessage 发送流中断消息，触发客户端自动重试
+// 模拟上游代理的行为：当 EOF 发生时，发送一个完整的新消息（第二个 message_start）
+// Claude Code 会识别这种模式并自动重试请求
+// 参考: req-fd3a8dd9.debug 中观察到的上游代理行为
+func sendStreamInterruptedMessage(w http.ResponseWriter, flusher http.Flusher, message string, modelName string) {
+	// 使用 UUID 作为 message id（模拟上游代理的行为，与正常的 msg_ 前缀不同）
+	msgID := uuid.New().String()
+
+	// 1. message_start - 新消息开始（使用 Anthropic 格式的 usage 字段）
+	fmt.Fprintf(w, "event: message_start\n")
+	fmt.Fprintf(w, "data: {\"type\":\"message_start\",\"message\":{\"id\":\"%s\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"%s\",\"content\":[],\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":0,\"output_tokens\":0}}}\n\n",
+		msgID, escapeJSONString(modelName))
+	flusher.Flush()
+
+	// 2. content_block_start - 开始 text 类型的内容块
+	fmt.Fprintf(w, "event: content_block_start\n")
+	fmt.Fprintf(w, "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n")
+	flusher.Flush()
+
+	// 3. content_block_delta - 发送错误信息内容
+	fmt.Fprintf(w, "event: content_block_delta\n")
+	fmt.Fprintf(w, "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"%s\"}}\n\n",
+		escapeJSONString(message))
+	flusher.Flush()
+
+	// 4. content_block_stop - 内容块结束
+	fmt.Fprintf(w, "event: content_block_stop\n")
+	fmt.Fprintf(w, "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n")
+	flusher.Flush()
+
+	// 5. message_delta - 消息增量更新（包含 stop_reason 和 usage，让客户端认为流完整）
+	fmt.Fprintf(w, "event: message_delta\n")
+	fmt.Fprintf(w, "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":0}}\n\n")
+	flusher.Flush()
+
+	// 6. message_stop - 消息结束（关键！让客户端识别为完整消息从而触发重试）
+	fmt.Fprintf(w, "event: message_stop\n")
+	fmt.Fprintf(w, "data: {\"type\":\"message_stop\"}\n\n")
+	flusher.Flush()
+}
+
+// isStreamingEOFError 检查错误是否为流式传输过程中的 EOF 错误
+// 只匹配在流式响应过程中服务端突然断开的情况（已收到 200 响应）
+func isStreamingEOFError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := strings.ToLower(err.Error())
+	// 检查是否包含 stream_status 前缀（表示已进入流式处理阶段）且包含 eof
+	return strings.Contains(errStr, "stream_status:") && strings.Contains(errStr, "eof")
+}
+
+// escapeJSONString 对字符串进行 JSON 转义
+func escapeJSONString(s string) string {
+	s = strings.ReplaceAll(s, "\\", "\\\\")
+	s = strings.ReplaceAll(s, "\"", "\\\"")
+	s = strings.ReplaceAll(s, "\n", "\\n")
+	s = strings.ReplaceAll(s, "\r", "\\r")
+	s = strings.ReplaceAll(s, "\t", "\\t")
+	return s
 }
 
 // HandleStreamingRequest 统一流式请求处理
@@ -313,10 +388,24 @@ func (sh *StreamingHandler) executeStreamingWithRetry(ctx context.Context, w htt
 					// 根据状态决定是否发送错误信息
 					if status == "cancelled" {
 						fmt.Fprintf(w, "data: cancelled: 客户端取消请求\n\n")
+						flusher.Flush()
+					} else if isStreamingEOFError(err) && sh.config.RequestSuspend.EOFRetryHint {
+						// 🔄 [EOF重试提示] 流式传输过程中 EOF：发送中断消息触发客户端自动重试
+						// 优先使用从错误信息中解析的模型名称（parsedModelName），因为它是流处理过程中解析的
+						// 其次使用 ProcessStreamWithRetry 返回的 modelName
+						interruptModelName := parsedModelName
+						if interruptModelName == "" || interruptModelName == "unknown" {
+							interruptModelName = modelName
+						}
+						if interruptModelName == "" || interruptModelName == "unknown" {
+							interruptModelName = "claude-3-5-sonnet-20241022" // 默认模型
+						}
+						slog.Info(fmt.Sprintf("🔄 [EOF重试提示] [%s] 流式传输中断，发送中断消息触发客户端重试, 模型: %s", connID, interruptModelName))
+						sendStreamInterruptedMessage(w, flusher, "Connection interrupted", interruptModelName)
 					} else {
 						fmt.Fprintf(w, "data: error: 流式处理失败: %v\n\n", err)
+						flusher.Flush()
 					}
-					flusher.Flush()
 					return
 				}
 

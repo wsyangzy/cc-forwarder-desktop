@@ -54,7 +54,9 @@ data/
 
 # Test files
 *_test_example.go
-/docs
+/docs/*
+!/docs/DEVLOG.md
+!/docs/TODO.md
 /data
 docs/TECHNICAL_ARCHITECTURE.md
 docs/REFACTOR_PLAN.md

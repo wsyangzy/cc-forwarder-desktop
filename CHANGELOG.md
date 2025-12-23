@@ -5,6 +5,115 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 项目遵循 [语义化版本控制](https://semver.org/lang/zh-CN/)。
 
+## [6.0.1] - 2025-12-23
+
+### 🐛 Bug 修复 (Bug Fixes)
+
+- **SQLite schema 兼容性**: 修复旧库缺列时初始化失败导致“历史数据读不到”的问题
+
+### 🎨 界面与体验 (UI/UX)
+
+- **页面标题区统一**: 概览/渠道管理/基础定价/系统日志等页面统一标题图标与对齐布局
+
+### 🔧 清理 (Chore)
+
+- **移除冗余的按 Token 统计方案**: 不再引入按 token/API key 聚合统计维度（以端点为准）
+
+## [6.0.0] - 2025-12-22
+
+### 🚀 重大变更 (Breaking Changes)
+
+- **渠道级路由与故障转移**: 路由与故障转移的第一层边界从“端点/组”升级为“渠道（channel）”
+  - 请求默认仅在当前激活渠道内选择端点
+  - 渠道内端点故障转移默认开启，可通过端点 `failover_enabled=false` 退出候选
+  - 当前渠道内可用端点耗尽后才触发跨渠道故障转移
+
+### ✨ 新增功能 (New Features)
+
+- **渠道管理（SQLite 模式）**: 支持新增/编辑/删除渠道，并在渠道内管理端点
+- **渠道优先级**: 新增 `channels.priority`，用于跨渠道切换顺序与前端排序展示
+- **端点重命名**: 支持编辑端点时修改名称，并尽可能同步历史记录显示字段
+- **跨渠道故障转移支持路由策略**: 跨渠道选择下一渠道也遵循 `strategy.type = priority|fastest`
+- **设置页鉴权 Token 脱敏**: `auth.token` 默认脱敏展示，并提供显示/隐藏切换
+
+### 🎨 界面与体验 (UI/UX)
+
+- **渠道卡片化布局**: 渠道管理页面以卡片分块展示渠道与端点，减少表单堆叠与横向滚动
+- **端点详情弹窗优化**: 点击遮罩关闭、Token/API Key 脱敏展示并支持复制原始值
+
+---
+
+## [5.2.3] - 2025-12-20
+
+### 🐛 Bug 修复 (Bug Fixes)
+
+- **EOF 重试机制修复**: 修复 LoggingMiddleware 导致 Flusher 接口断言失败的问题
+  - `responseWriter` 包装器未实现 `http.Flusher` 接口，导致流式处理退化为 `noOpFlusher`
+  - EOF 发生时 `sendStreamInterruptedMessage` 发送的重试信号无法推送到客户端
+  - 新增 `Flush()` 方法正确转发到底层 ResponseWriter
+  - 新增 `Unwrap()` 方法支持 Go 1.20+ `http.ResponseController` 解包
+
+---
+
+## [5.2.2] - 2025-12-20
+
+### 🐛 Bug 修复 (Bug Fixes)
+
+- **SuspensionManager 配置热更新**: 修复配置热更新时 SuspensionManager 未同步更新的问题
+  - 在 `SuspensionManager` 接口中添加 `UpdateConfig` 方法
+  - `Handler.UpdateConfig` 现在会正确调用 `sharedSuspensionManager.UpdateConfig`
+  - 挂起相关配置（超时、最大挂起数等）修改后无需重启即可生效
+
+---
+
+## [5.2.1] - 2025-12-20
+
+### 🔧 改进 (Improvements)
+
+- **EOF 重试机制改进**: 使用双 message_start 模式触发客户端自动重试
+  - 发送完整的 Anthropic 流式消息序列（message_start → content_block → message_delta → message_stop）
+  - 修复 usage 字段使用 Anthropic 风格（input_tokens/output_tokens）
+  - 修复模型名称优先级：优先使用从流中解析的模型名称
+
+- **EOF 调试增强**: 流中断时始终保存 debug 文件，无论是否有 Token 信息
+  - 方便调试 EOF 错误场景
+  - 保存完整的流式数据内容
+
+- **Debug 文件自动清理**: 防止调试文件无限增长
+  - 按天数清理：删除 N 天前的文件（默认 7 天）
+  - 按数量清理：保留最新的 N 个文件（默认 50 个）
+  - 节流机制：每 24 小时最多执行一次清理
+
+---
+
+## [5.2.0] - 2025-12-20
+
+### ✨ 新增功能 (New Features)
+
+- **EOF 重试提示**: 流式传输中断时发送 Anthropic API 标准格式的可重试错误
+  - 新增 `eof_retry_hint` 配置项（默认关闭）
+  - 发送 `overloaded_error` 类型错误，让 Claude Code 等客户端能自动重试
+  - 精确识别流式传输阶段的 EOF 错误，不影响连接阶段的错误处理
+
+- **端点渠道分组显示**: 端点管理页面按渠道折叠/展开显示
+  - 端点按渠道（channel）分组，支持折叠/展开
+  - 渠道行显示端点数量和健康状态汇总
+  - 全部展开/折叠快捷操作
+  - 组件拆分重构，提升代码可维护性
+
+### 🔧 改进 (Improvements)
+
+- **请求状态文字优化**: 状态标签更加一致
+  - "挂起" → "已挂起"
+  - "失败" → "已失败"
+  - "超时" → "已超时"
+
+- **CompleteRequestWithQuality 原子操作**: 避免请求完成时的时序问题
+  - 一次性完成 status、tokens、duration 和 failureReason 的设置
+  - 解决两次独立操作可能导致的数据不一致
+
+---
+
 ## [5.1.0] - 2025-12-17
 
 ### ✨ 新增功能 (New Features)

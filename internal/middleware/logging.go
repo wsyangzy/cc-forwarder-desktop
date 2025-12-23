@@ -58,6 +58,20 @@ func (rw *responseWriter) Write(b []byte) (int, error) {
 	return n, err
 }
 
+// Flush implements http.Flusher interface
+// 🔧 [关键修复] 将 Flush 调用转发到底层 ResponseWriter，确保流式响应能正确推送
+func (rw *responseWriter) Flush() {
+	if flusher, ok := rw.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+// Unwrap returns the underlying ResponseWriter
+// 支持 Go 1.20+ http.ResponseController 自动解包访问底层接口
+func (rw *responseWriter) Unwrap() http.ResponseWriter {
+	return rw.ResponseWriter
+}
+
 // Wrap wraps an HTTP handler with logging
 func (lm *LoggingMiddleware) Wrap(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

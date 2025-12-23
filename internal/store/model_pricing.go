@@ -500,7 +500,17 @@ func (s *SQLiteModelPricingStore) scanModelPricing(row *sql.Row) (*ModelPricingR
 
 // scanModelPricings 扫描多个模型定价记录
 func (s *SQLiteModelPricingStore) scanModelPricings(ctx context.Context, query string, args ...interface{}) ([]*ModelPricingRecord, error) {
-	rows, err := s.getQuerier().QueryContext(ctx, query, args...)
+	var (
+		rows *sql.Rows
+		err  error
+	)
+	if s.tx != nil {
+		rows, err = s.tx.QueryContext(ctx, query, args...)
+	} else {
+		rows, err = queryRowsWithSQLiteBusyRetry(ctx, func() (*sql.Rows, error) {
+			return s.db.QueryContext(ctx, query, args...)
+		})
+	}
 	if err != nil {
 		return nil, fmt.Errorf("查询模型定价失败: %w", err)
 	}

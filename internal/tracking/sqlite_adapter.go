@@ -165,9 +165,23 @@ func (s *SQLiteAdapter) InitSchema() error {
 		return fmt.Errorf("failed to read schema.sql: %w", err)
 	}
 
-	// SQLite可以直接执行整个schema
+	// SQLite可以直接执行整个schema。
+	// 但：旧库可能缺少后续新增的列，schema.sql 中的索引/触发器可能会引用这些列，
+	// 导致 Exec 直接失败并中断启动。为保证向后兼容：
+	// - 先尝试执行 schema.sql
+	// - 若因“no such column”失败，则先跑 migrateSchema 补列，再重试执行 schema.sql
 	if _, err := s.db.ExecContext(ctx, string(schema)); err != nil {
-		return fmt.Errorf("failed to execute schema: %w", err)
+		if strings.Contains(err.Error(), "no such column:") {
+			s.logger.Warn("schema.sql 执行失败（缺少列），将先执行迁移后重试", "error", err)
+			if err := s.migrateSchema(ctx); err != nil {
+				return fmt.Errorf("failed to migrate schema (pre-schema retry): %w", err)
+			}
+			if _, err := s.db.ExecContext(ctx, string(schema)); err != nil {
+				return fmt.Errorf("failed to execute schema (after migrate): %w", err)
+			}
+		} else {
+			return fmt.Errorf("failed to execute schema: %w", err)
+		}
 	}
 
 	// v5.0.1+: 执行迁移添加新字段

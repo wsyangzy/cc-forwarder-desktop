@@ -101,6 +101,7 @@ CREATE INDEX IF NOT EXISTS idx_usage_summary_model ON usage_summary(model_name);
 CREATE INDEX IF NOT EXISTS idx_usage_summary_endpoint ON usage_summary(endpoint_name);
 CREATE INDEX IF NOT EXISTS idx_usage_summary_group ON usage_summary(group_name);
 
+
 -- 触发器：自动更新 updated_at 时间戳（统一使用带时区格式，微秒精度）
 CREATE TRIGGER IF NOT EXISTS update_request_logs_timestamp
     AFTER UPDATE ON request_logs

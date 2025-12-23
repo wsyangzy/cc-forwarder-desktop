@@ -6,7 +6,7 @@
 
 **CC-Forwarder Desktop** 是一款基于 Wails 构建的跨平台桌面应用，用于 Claude API 请求的智能转发、负载均衡和故障恢复。
 
-- **当前版本**: v5.1.0
+- **当前版本**: v5.2.3
 - **技术栈**: Go + Wails v2 + React + Vite
 - **支持平台**: macOS / Windows / Linux
 

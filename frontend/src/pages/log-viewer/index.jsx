@@ -127,15 +127,17 @@ function LogsPage() {
       <div className="flex-shrink-0 border-b border-slate-200 px-6 py-4">
         {/* 标题栏 */}
         <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
-              <FileText size={28} className="text-indigo-600" />
-              系统日志
-            </h1>
-            <p className="text-slate-500 text-sm mt-1">
-              实时查看系统运行日志 · 共 {logs.length} 条
-              {filteredLogs.length !== logs.length && ` · 筛选后 ${filteredLogs.length} 条`}
-            </p>
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-slate-900 rounded-lg text-white shadow-lg">
+              <FileText size={20} />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold text-slate-800">系统日志</h1>
+              <p className="text-slate-500 text-sm mt-1">
+                实时查看系统运行日志 · 共 {logs.length} 条
+                {filteredLogs.length !== logs.length && ` · 筛选后 ${filteredLogs.length} 条`}
+              </p>
+            </div>
           </div>
 
           <LogControls

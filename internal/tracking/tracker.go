@@ -551,8 +551,17 @@ func buildDatabaseConfig(config *Config, globalTimezone string) (DatabaseConfig,
 				"reason", "v4.1.0 移除了 MySQL 支持",
 				"suggestion", "请修改配置 type: sqlite 或删除 database.type 配置")
 		}
-		dbConfig.DatabasePath = config.Database.Path
-		dbConfig.Timezone = config.Database.Timezone
+		// 兼容：配置里写了 database 但没写 path 时，回退到 DatabasePath（由上层默认填充为用户目录路径）。
+		if config.Database.Path != "" {
+			dbConfig.DatabasePath = config.Database.Path
+		} else {
+			dbConfig.DatabasePath = config.DatabasePath
+		}
+		if config.Database.Timezone != "" {
+			dbConfig.Timezone = config.Database.Timezone
+		} else {
+			dbConfig.Timezone = globalTimezone
+		}
 	} else {
 		// 向后兼容：使用原有的DatabasePath配置
 		dbConfig.DatabasePath = config.DatabasePath
@@ -821,6 +830,13 @@ func (ut *UsageTracker) recordRequestUpdateLegacy(requestID string, opts UpdateO
 // RecordRequestSuccess 记录请求成功完成
 // 一次性更新所有成功相关字段：status='completed', end_time, duration_ms, Token和成本信息
 func (ut *UsageTracker) RecordRequestSuccess(requestID, modelName string, tokens *TokenUsage, duration time.Duration) {
+	ut.RecordRequestSuccessWithQuality(requestID, modelName, tokens, duration, "")
+}
+
+// RecordRequestSuccessWithQuality 记录请求成功完成（支持数据质量标记）
+// 🔧 [方案A实现] 2025-12-20: 原子操作，在 CompleteAndArchive 中一次性设置所有字段包括 failureReason
+// 一次性更新所有成功相关字段：status='completed', end_time, duration_ms, Token、成本信息和可选的 failure_reason
+func (ut *UsageTracker) RecordRequestSuccessWithQuality(requestID, modelName string, tokens *TokenUsage, duration time.Duration, failureReason string) {
 	if ut.config == nil || !ut.config.Enabled {
 		return
 	}
@@ -861,6 +877,9 @@ func (ut *UsageTracker) RecordRequestSuccess(requestID, modelName string, tokens
 			req.CacheReadTokens = cacheReadTokens
 			req.EndTime = &now
 			req.DurationMs = duration.Milliseconds()
+			// 🔧 [方案A实现] 2025-12-20: 显式覆盖 failureReason（无论是否为空）
+			// 避免之前中途错误设置的旧值残留，导致"成功但带失败原因"的误标
+			req.FailureReason = failureReason
 			// 成本在归档时计算
 		})
 		if err != nil {
@@ -868,17 +887,18 @@ func (ut *UsageTracker) RecordRequestSuccess(requestID, modelName string, tokens
 			slog.Debug("🔥 热池完成请求失败，降级到事件队列模式",
 				"request_id", requestID,
 				"error", err)
-			ut.recordRequestSuccessLegacy(requestID, modelName, inputTokens, outputTokens, cacheCreationTokens, cacheReadTokens, duration)
+			ut.recordRequestSuccessLegacy(requestID, modelName, inputTokens, outputTokens, cacheCreationTokens, cacheReadTokens, duration, failureReason)
 		}
 		return
 	}
 
 	// 传统模式：发送事件到队列
-	ut.recordRequestSuccessLegacy(requestID, modelName, inputTokens, outputTokens, cacheCreationTokens, cacheReadTokens, duration)
+	ut.recordRequestSuccessLegacy(requestID, modelName, inputTokens, outputTokens, cacheCreationTokens, cacheReadTokens, duration, failureReason)
 }
 
 // recordRequestSuccessLegacy 传统模式记录请求成功
-func (ut *UsageTracker) recordRequestSuccessLegacy(requestID, modelName string, inputTokens, outputTokens, cacheCreationTokens, cacheReadTokens int64, duration time.Duration) {
+// 🔧 [方案A实现] 2025-12-20: 增加 failureReason 参数支持
+func (ut *UsageTracker) recordRequestSuccessLegacy(requestID, modelName string, inputTokens, outputTokens, cacheCreationTokens, cacheReadTokens int64, duration time.Duration, failureReason string) {
 	event := RequestEvent{
 		Type:      "success",
 		RequestID: requestID,
@@ -890,6 +910,7 @@ func (ut *UsageTracker) recordRequestSuccessLegacy(requestID, modelName string, 
 			CacheCreationTokens: cacheCreationTokens,
 			CacheReadTokens:     cacheReadTokens,
 			Duration:            duration,
+			FailureReason:       failureReason,
 		},
 	}
 
@@ -1454,7 +1475,7 @@ func (ut *UsageTracker) ExportToCSV(ctx context.Context, startTime, endTime time
 	}
 
 	// CSV header
-	csv := "request_id,client_ip,user_agent,method,path,start_time,end_time,duration_ms,endpoint_name,group_name,model_name,status,http_status_code,retry_count,input_tokens,output_tokens,cache_creation_tokens,cache_read_tokens,input_cost_usd,output_cost_usd,cache_creation_cost_usd,cache_read_cost_usd,total_cost_usd,created_at,updated_at\n"
+	csv := "request_id,client_ip,user_agent,method,path,start_time,end_time,duration_ms,channel,endpoint_name,group_name,model_name,status,http_status_code,retry_count,input_tokens,output_tokens,cache_creation_tokens,cache_read_tokens,input_cost_usd,output_cost_usd,cache_creation_cost_usd,cache_read_cost_usd,total_cost_usd,created_at,updated_at\n"
 
 	// CSV rows
 	for _, log := range logs {
@@ -1473,10 +1494,10 @@ func (ut *UsageTracker) ExportToCSV(ctx context.Context, startTime, endTime time
 			httpStatus = fmt.Sprintf("%d", *log.HTTPStatusCode)
 		}
 
-		csv += fmt.Sprintf("%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%d,%d,%d,%d,%d,%.6f,%.6f,%.6f,%.6f,%.6f,%s,%s\n",
+		csv += fmt.Sprintf("%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%d,%d,%d,%d,%d,%.6f,%.6f,%.6f,%.6f,%.6f,%s,%s\n",
 			log.RequestID, log.ClientIP, log.UserAgent, log.Method, log.Path,
 			log.StartTime.Format(time.RFC3339), endTime, durationMs,
-			log.EndpointName, log.GroupName, log.ModelName, log.Status,
+			log.Channel, log.EndpointName, log.GroupName, log.ModelName, log.Status,
 			httpStatus, log.RetryCount,
 			log.InputTokens, log.OutputTokens, log.CacheCreationTokens, log.CacheReadTokens,
 			log.InputCostUSD, log.OutputCostUSD, log.CacheCreationCostUSD, log.CacheReadCostUSD, log.TotalCostUSD,

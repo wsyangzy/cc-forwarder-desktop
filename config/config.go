@@ -108,6 +108,7 @@ type RequestSuspendConfig struct {
 	Enabled            bool          `yaml:"enabled"`               // Enable request suspension feature, default: false
 	Timeout            time.Duration `yaml:"timeout"`               // Timeout for suspended requests, default: 300s
 	MaxSuspendedRequests int          `yaml:"max_suspended_requests"` // Maximum number of suspended requests, default: 100
+	EOFRetryHint       bool          `yaml:"eof_retry_hint"`        // Send retryable error format on EOF, default: false
 }
 
 // ModelPricing 模型定价配置
@@ -124,7 +125,7 @@ type UsageTrackingConfig struct {
 	Enabled         bool                     `yaml:"enabled"`          // Enable usage tracking, default: false
 
 	// 向后兼容：保留原有的 database_path 配置
-	DatabasePath    string                   `yaml:"database_path"`    // SQLite database file path, default: data/usage.db
+	DatabasePath    string                   `yaml:"database_path"`    // SQLite database file path, default: data/cc-forwarder.db
 
 	// 新增：数据库配置（可选，优先级高于 database_path）
 	Database        *DatabaseBackendConfig   `yaml:"database,omitempty"` // Database configuration (optional)
@@ -398,12 +399,16 @@ func (c *Config) setDefaults() {
 	// RequestSuspend.Enabled defaults to false (zero value) for backward compatibility
 
 	// Set usage tracking defaults
+	// 兼容：若使用新版配置 usage_tracking.database.path，则统一写入 database_path 供内部使用。
+	if c.UsageTracking.Database != nil && strings.TrimSpace(c.UsageTracking.Database.Path) != "" {
+		c.UsageTracking.DatabasePath = strings.TrimSpace(c.UsageTracking.Database.Path)
+	}
 	if c.UsageTracking.DatabasePath == "" {
 		// 使用跨平台用户目录作为默认路径
-		// Windows: %APPDATA%\CC-Forwarder\data\usage.db
-		// macOS: ~/Library/Application Support/CC-Forwarder/data/usage.db
-		// Linux: ~/.local/share/cc-forwarder/data/usage.db
-		c.UsageTracking.DatabasePath = filepath.Join(getConfigAppDataDir(), "data", "usage.db")
+		// Windows: %APPDATA%\CC-Forwarder\data\cc-forwarder.db
+		// macOS: ~/Library/Application Support/CC-Forwarder/data/cc-forwarder.db
+		// Linux: ~/.local/share/cc-forwarder/data/cc-forwarder.db
+		c.UsageTracking.DatabasePath = filepath.Join(getConfigAppDataDir(), "data", "cc-forwarder.db")
 	}
 	if c.UsageTracking.BufferSize == 0 {
 		c.UsageTracking.BufferSize = 1000 // Default buffer size

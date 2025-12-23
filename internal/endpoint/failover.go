@@ -6,6 +6,8 @@ package endpoint
 import (
 	"fmt"
 	"log/slog"
+	"math"
+	"sort"
 	"time"
 )
 
@@ -95,11 +97,22 @@ func (m *Manager) TriggerRequestFailoverWithFailedEndpoints(failedEndpointNames 
 	// 3) 将失败渠道置为冷却，触发跨渠道切换
 	m.groupManager.SetGroupCooldown(failedChannel)
 
-	// 4) 选择并激活下一个可用渠道（按优先级从高到低）
-	var newChannel string
+	// 4) 选择并激活下一个可用渠道（由 strategy + 可用性共同决定）
+	//
+	// 说明：
+	// - 可用性判定不依赖“响应时间快慢”，而依赖：未手动暂停、未处于渠道冷却、渠道内至少存在一个可用端点
+	// - “fastest” 仅用于在候选渠道之间做排序（按渠道内可用端点的最小响应时间），不会因为慢就判定不可用
+	type groupCandidate struct {
+		name      string
+		priority  int
+		bestRT    time.Duration
+		hasBestRT bool
+	}
+
 	now := time.Now()
+	candidates := make([]groupCandidate, 0, 8)
 	for _, g := range m.groupManager.GetAllGroups() {
-		if g.Name == "" || g.Name == failedChannel {
+		if g == nil || g.Name == "" || g.Name == failedChannel {
 			continue
 		}
 		if g.ManuallyPaused {
@@ -109,9 +122,16 @@ func (m *Manager) TriggerRequestFailoverWithFailedEndpoints(failedEndpointNames 
 			continue
 		}
 
-		// 组内至少有一个可用端点才视为可切换
+		// 渠道内至少有一个“可用端点”才视为可切换（与渠道内路由候选保持一致）
 		hasAvailableEndpoint := false
+
+		bestRT := time.Duration(math.MaxInt64)
+		hasBestRT := false
 		for _, ep := range g.Endpoints {
+			if ep == nil {
+				continue
+			}
+
 			failoverEnabled := true
 			if ep.Config.FailoverEnabled != nil {
 				failoverEnabled = *ep.Config.FailoverEnabled
@@ -124,24 +144,77 @@ func (m *Manager) TriggerRequestFailoverWithFailedEndpoints(failedEndpointNames 
 			inEndpointCooldown := !ep.Status.CooldownUntil.IsZero() && now.Before(ep.Status.CooldownUntil)
 			isHealthy := ep.Status.Healthy
 			neverChecked := ep.Status.NeverChecked
+			rt := ep.Status.ResponseTime
 			ep.mutex.RUnlock()
 
-			if (isHealthy || neverChecked) && !inEndpointCooldown {
-				hasAvailableEndpoint = true
-				break
+			if inEndpointCooldown {
+				continue
+			}
+			if !(isHealthy || neverChecked) {
+				continue
+			}
+
+			hasAvailableEndpoint = true
+
+			// fastest 策略的排序依据：优先使用“已测得”的响应时间；未测得则不参与 bestRT
+			if rt > 0 {
+				hasBestRT = true
+				if rt < bestRT {
+					bestRT = rt
+				}
 			}
 		}
 
-		if hasAvailableEndpoint {
-			newChannel = g.Name
-			break
+		if !hasAvailableEndpoint {
+			continue
 		}
+
+		candidates = append(candidates, groupCandidate{
+			name:      g.Name,
+			priority:  g.Priority,
+			bestRT:    bestRT,
+			hasBestRT: hasBestRT,
+		})
 	}
 
-	if newChannel == "" {
+	if len(candidates) == 0 {
 		slog.Error("❌ [故障转移] 没有可用的故障转移渠道")
 		return "", fmt.Errorf("没有可用的故障转移渠道")
 	}
+
+	strategy := "priority"
+	if m.config != nil && m.config.Strategy.Type != "" {
+		strategy = m.config.Strategy.Type
+	}
+
+	switch strategy {
+	case "fastest":
+		sort.Slice(candidates, func(i, j int) bool {
+			// 有响应时间的优先于“未测得”的（避免完全随机）
+			if candidates[i].hasBestRT != candidates[j].hasBestRT {
+				return candidates[i].hasBestRT
+			}
+			if candidates[i].hasBestRT && candidates[j].hasBestRT && candidates[i].bestRT != candidates[j].bestRT {
+				return candidates[i].bestRT < candidates[j].bestRT
+			}
+			// 回退：优先级越小越优先，其次名字稳定排序
+			if candidates[i].priority != candidates[j].priority {
+				return candidates[i].priority < candidates[j].priority
+			}
+			return candidates[i].name < candidates[j].name
+		})
+	default:
+		// priority（或未知策略）：
+		// 以渠道优先级（GroupInfo.Priority，v6.1+ 为 channel.priority）为主，保持稳定
+		sort.Slice(candidates, func(i, j int) bool {
+			if candidates[i].priority != candidates[j].priority {
+				return candidates[i].priority < candidates[j].priority
+			}
+			return candidates[i].name < candidates[j].name
+		})
+	}
+
+	newChannel := candidates[0].name
 
 	if err := m.groupManager.ManualActivateGroup(newChannel); err != nil {
 		// 兼容：新渠道端点可能处于 neverChecked（尚未健康检查），但请求级故障转移应允许先切过去尝试。

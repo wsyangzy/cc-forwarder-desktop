@@ -3,16 +3,14 @@
 // 2025-11-28 (Updated 2025-12-06 for v5.0 SQLite Storage)
 // ============================================
 
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   Activity,
-  Globe,
   RefreshCw,
   Plus,
   Pencil,
   Trash2,
   Database,
-  FileText,
   AlertTriangle,
   Server,
   Copy,
@@ -27,7 +25,8 @@ import {
   ChevronUp,
   Pause,
   Play,
-  Power
+  Power,
+  Globe
 } from 'lucide-react';
 import {
   Button,
@@ -35,7 +34,10 @@ import {
   ErrorMessage
 } from '@components/ui';
 import useEndpointsData from '@hooks/useEndpointsData.js';
-import { EndpointForm } from './components';
+import {
+  EndpointForm,
+  DeleteConfirmDialog
+} from './components';
 import {
   getEndpointStorageStatus,
   getEndpointRecords,
@@ -57,73 +59,6 @@ import {
   subscribeToEvent
 } from '@utils/wailsApi.js';
 
-// ============================================
-// 存储模式指示器
-// ============================================
-
-const StorageModeIndicator = ({ storageStatus }) => {
-  if (!storageStatus) return null;
-
-  const isSqlite = storageStatus.storageType === 'sqlite';
-
-  return (
-    <div className={`
-      flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium
-      ${isSqlite
-        ? 'bg-indigo-50 text-indigo-700 border border-indigo-200'
-        : 'bg-slate-50 text-slate-600 border border-slate-200'
-      }
-    `}>
-      {isSqlite ? <Database size={14} /> : <FileText size={14} />}
-      {isSqlite ? 'SQLite 存储模式' : 'YAML 配置模式'}
-      {isSqlite && (
-        <span className="text-indigo-500">
-          ({storageStatus.enabledCount}/{storageStatus.totalCount} 启用)
-        </span>
-      )}
-    </div>
-  );
-};
-
-// ============================================
-// 删除确认对话框
-// ============================================
-
-const DeleteConfirmDialog = ({ endpoint, onConfirm, onCancel, loading }) => (
-  <div className="fixed inset-0 bg-black/50 flex items-start justify-center z-50 animate-fade-in pt-[20vh]">
-    <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6">
-      <div className="flex items-center gap-3 mb-4">
-        <div className="p-3 bg-rose-100 rounded-full">
-          <AlertTriangle className="text-rose-600" size={24} />
-        </div>
-        <div>
-          <h3 className="text-lg font-semibold text-slate-900">确认删除</h3>
-          <p className="text-sm text-slate-500">此操作不可撤销</p>
-        </div>
-      </div>
-
-      <p className="text-slate-700 mb-6">
-        确定要删除端点 <span className="font-semibold">"{endpoint?.name}"</span> 吗？
-        删除后将无法恢复。
-      </p>
-
-      <div className="flex justify-end gap-3">
-        <Button variant="ghost" onClick={onCancel} disabled={loading}>
-          取消
-        </Button>
-        <Button
-          variant="danger"
-          icon={Trash2}
-          onClick={onConfirm}
-          loading={loading}
-        >
-          确认删除
-        </Button>
-      </div>
-    </div>
-  </div>
-);
-
 const DeleteChannelConfirmDialog = ({ channelName, endpointCount = 0, onConfirm, onCancel, loading }) => {
   const confirmDisabled = loading;
 
@@ -141,7 +76,7 @@ const DeleteChannelConfirmDialog = ({ channelName, endpointCount = 0, onConfirm,
         </div>
 
         <p className="text-slate-700 mb-4">
-          确定要删除渠道 <span className="font-semibold">"{channelName}"</span> 吗？
+          确定要删除渠道 <span className="font-semibold">“{channelName}”</span> 吗？
         </p>
 
         {endpointCount > 0 && (
@@ -333,16 +268,6 @@ const EndpointMiniCard = ({
           </div>
 
           <div className="flex items-center gap-1 flex-shrink-0">
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                navigator.clipboard.writeText(JSON.stringify(endpoint, null, 2));
-              }}
-              className="p-1.5 text-slate-400 hover:bg-slate-100 hover:text-indigo-600 rounded-md transition-colors"
-              title="复制配置"
-            >
-              <Copy size={14} />
-            </button>
             {isSqliteMode && (
               <>
                 <button
@@ -432,6 +357,7 @@ const EndpointDetailModal = ({
   endpoint,
   isOpen,
   isSqliteMode,
+  failoverDefaultCooldownSeconds = 600,
   onClose,
   onEdit,
   onDelete
@@ -463,13 +389,25 @@ const EndpointDetailModal = ({
     { label: '超时(s)', value: endpoint.timeoutSeconds ?? endpoint.timeout_seconds ?? '-' },
   ];
 
-  const cooldownSeconds = endpoint.cooldownSeconds ?? endpoint.cooldown_seconds ?? '-';
+  const endpointCooldownSeconds = endpoint.cooldownSeconds ?? endpoint.cooldown_seconds;
+  const cooldownUsesGlobal = endpointCooldownSeconds == null;
+  const cooldownSeconds = endpointCooldownSeconds ?? failoverDefaultCooldownSeconds ?? '-';
   const hasToken = !!(tokenRaw || tokenMasked);
   const hasApiKey = !!(apiKeyRaw || apiKeyMasked);
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50 animate-fade-in">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-3xl max-h-[calc(100vh-2rem)] flex flex-col overflow-hidden">
+    <div
+      className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50 animate-fade-in"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) {
+          onClose?.();
+        }
+      }}
+    >
+      <div
+        className="bg-white rounded-2xl shadow-xl w-full max-w-3xl max-h-[calc(100vh-2rem)] flex flex-col overflow-hidden"
+        onMouseDown={(e) => e.stopPropagation()}
+      >
         <div className="flex items-start justify-between px-6 py-4 border-b border-slate-100">
           <div className="min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
@@ -568,9 +506,16 @@ const EndpointDetailModal = ({
             ))}
           </div>
 
-          <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="bg-slate-50 rounded-xl p-3 border border-slate-200/60">
-              <div className="text-xs text-slate-500 mb-1">冷却(s)</div>
+              <div className="flex items-center justify-between mb-1">
+                <div className="text-xs text-slate-500">冷却(s)</div>
+                {cooldownUsesGlobal && (
+                  <span className="text-[10px] text-slate-400 bg-white/70 px-2 py-0.5 rounded border border-slate-200">
+                    全局默认
+                  </span>
+                )}
+              </div>
               <div className="text-sm font-semibold text-slate-900 break-all">
                 {String(cooldownSeconds)}
               </div>
@@ -578,7 +523,7 @@ const EndpointDetailModal = ({
 
             <div className="bg-slate-50 rounded-xl p-3 border border-slate-200/60">
               <div className="flex items-center justify-between mb-1">
-                <div className="text-xs text-slate-500">Token</div>
+                <div className="text-xs text-slate-500">Token（脱敏）</div>
                 <button
                   onClick={() => {
                     if (tokenRaw) {
@@ -586,13 +531,14 @@ const EndpointDetailModal = ({
                     }
                   }}
                   disabled={!tokenRaw}
-                  className={`inline-flex items-center gap-1 text-xs transition-colors ${
-                    tokenRaw ? 'text-slate-400 hover:text-indigo-600' : 'text-slate-300 cursor-not-allowed'
+                  className={`inline-flex items-center justify-center p-1 rounded-md transition-colors ${
+                    tokenRaw
+                      ? 'text-slate-400 hover:text-indigo-600 hover:bg-white/70'
+                      : 'text-slate-300 cursor-not-allowed'
                   }`}
                   title={tokenRaw ? '复制原始 Token' : '无原始 Token（仅 SQLite 记录可复制）'}
                 >
                   <Copy size={12} />
-                  复制
                 </button>
               </div>
               <div className="text-sm font-mono text-slate-900 break-all">
@@ -604,7 +550,7 @@ const EndpointDetailModal = ({
           {hasApiKey && (
             <div className="mt-3 bg-slate-50 rounded-xl p-3 border border-slate-200/60">
               <div className="flex items-center justify-between mb-1">
-                <div className="text-xs text-slate-500">API Key</div>
+                <div className="text-xs text-slate-500">API Key（脱敏）</div>
                 <button
                   onClick={() => {
                     if (apiKeyRaw) {
@@ -612,13 +558,14 @@ const EndpointDetailModal = ({
                     }
                   }}
                   disabled={!apiKeyRaw}
-                  className={`inline-flex items-center gap-1 text-xs transition-colors ${
-                    apiKeyRaw ? 'text-slate-400 hover:text-indigo-600' : 'text-slate-300 cursor-not-allowed'
+                  className={`inline-flex items-center justify-center p-1 rounded-md transition-colors ${
+                    apiKeyRaw
+                      ? 'text-slate-400 hover:text-indigo-600 hover:bg-white/70'
+                      : 'text-slate-300 cursor-not-allowed'
                   }`}
                   title={apiKeyRaw ? '复制原始 API Key' : '无原始 API Key（仅 SQLite 记录可复制）'}
                 >
                   <Copy size={12} />
-                  复制
                 </button>
               </div>
               <div className="text-sm font-mono text-slate-900 break-all">
@@ -662,23 +609,13 @@ const CreateChannelModal = ({
   mode = 'create',
   initialValue = null
 }) => {
-  const [name, setName] = useState('');
-  const [website, setWebsite] = useState('');
-  const [priority, setPriority] = useState('1');
+  const isEdit = mode === 'edit';
+  const [name, setName] = useState(() => (isEdit ? (initialValue?.name || '') : ''));
+  const [website, setWebsite] = useState(() => (isEdit ? (initialValue?.website || '') : ''));
+  const [priority, setPriority] = useState(() => String(isEdit ? (initialValue?.priority || 1) : 1));
   const [error, setError] = useState('');
 
-  useEffect(() => {
-    if (!open) return;
-    const isEdit = mode === 'edit';
-    setName(isEdit ? (initialValue?.name || '') : '');
-    setWebsite(isEdit ? (initialValue?.website || '') : '');
-    setPriority(String(isEdit ? (initialValue?.priority || 1) : 1));
-    setError('');
-  }, [initialValue, mode, open]);
-
   if (!open) return null;
-
-  const isEdit = mode === 'edit';
 
   return (
     <div className="fixed inset-0 bg-slate-900/30 backdrop-blur-sm flex items-center justify-center p-4 z-[60]">
@@ -1037,6 +974,7 @@ const EndpointsPage = () => {
   const [groups, setGroups] = useState([]);
   const [channelActionLoading, setChannelActionLoading] = useState(false);
   const [channelFailoverEnabled, setChannelFailoverEnabled] = useState(true);
+  const [failoverDefaultCooldownSeconds, setFailoverDefaultCooldownSeconds] = useState(600);
   const [channelsMeta, setChannelsMeta] = useState([]);
 
   // 批量检测状态
@@ -1151,10 +1089,15 @@ const EndpointsPage = () => {
       const cfg = await getConfig();
       if (seq !== configLoadSeqRef.current) return;
       setChannelFailoverEnabled(cfg?.failover_enabled !== false);
+      const cooldownSeconds = Number(cfg?.failover_default_cooldown_seconds);
+      setFailoverDefaultCooldownSeconds(
+        Number.isFinite(cooldownSeconds) && cooldownSeconds > 0 ? cooldownSeconds : 600
+      );
     } catch (err) {
       console.error('获取配置失败:', err);
       if (seq !== configLoadSeqRef.current) return;
       setChannelFailoverEnabled(true);
+      setFailoverDefaultCooldownSeconds(600);
     }
   }, []);
 
@@ -1341,7 +1284,7 @@ const EndpointsPage = () => {
       if (byCreated !== 0) return byCreated;
       return (a.name || '').localeCompare(b.name || '');
     });
-  }, [activeChannel, channelOptions, channelsMeta, displayEndpoints, groupInfoMap, isSqliteMode]);
+  }, [activeChannel, channelOptions, channelsMeta, displayEndpoints, groupInfoMap]);
 
   // 计算统计数据
   const displayStats = isSqliteMode
@@ -1503,19 +1446,21 @@ const EndpointsPage = () => {
       <div className="animate-fade-in">
       {/* 页面标题 */}
       <div className="flex justify-between items-end mb-8">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">渠道管理</h1>
-          <p className="text-slate-500 text-sm mt-1">
-            以渠道为单位进行路由与故障转移，渠道内优先在端点之间切换，渠道耗尽后跨渠道切换
-            {lastUpdate && (
-              <span className="ml-2 text-slate-400">· 更新于 {lastUpdate}</span>
-            )}
-          </p>
+        <div className="flex items-center gap-3">
+          <div className="p-2 bg-slate-900 rounded-lg text-white shadow-lg">
+            <ArrowRightLeft className="w-6 h-6" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-bold text-slate-900">渠道管理</h1>
+            <p className="text-slate-500 text-sm mt-1">
+              以渠道为单位进行路由与故障转移，渠道内优先在端点之间切换，渠道耗尽后跨渠道切换
+              {lastUpdate && (
+                <span className="ml-2 text-slate-400">· 更新于 {lastUpdate}</span>
+              )}
+            </p>
+          </div>
         </div>
         <div className="flex items-center gap-3">
-          {/* 存储模式指示器 - 已隐藏 */}
-          {/* <StorageModeIndicator storageStatus={storageStatus} /> */}
-
           {/* SSE 状态指示器 */}
           <div className="flex items-center gap-1.5 text-xs text-slate-500">
             <span className={`w-2 h-2 rounded-full ${
@@ -1743,26 +1688,30 @@ const EndpointsPage = () => {
         />
       )}
 
-      <CreateChannelModal
-        open={showCreateChannel && isSqliteMode}
-        loading={channelFormLoading}
-        serverError={createChannelError}
-        onClose={() => setShowCreateChannel(false)}
-        onSubmit={handleCreateChannel}
-      />
+      {showCreateChannel && isSqliteMode && (
+        <CreateChannelModal
+          open
+          loading={channelFormLoading}
+          serverError={createChannelError}
+          onClose={() => setShowCreateChannel(false)}
+          onSubmit={handleCreateChannel}
+        />
+      )}
 
-      <CreateChannelModal
-        open={showEditChannel && isSqliteMode}
-        loading={channelFormLoading}
-        serverError={editChannelError}
-        mode="edit"
-        initialValue={editingChannel}
-        onClose={() => {
-          setShowEditChannel(false);
-          setEditingChannel(null);
-        }}
-        onSubmit={handleUpdateChannel}
-      />
+      {showEditChannel && isSqliteMode && (
+        <CreateChannelModal
+          open
+          loading={channelFormLoading}
+          serverError={editChannelError}
+          mode="edit"
+          initialValue={editingChannel}
+          onClose={() => {
+            setShowEditChannel(false);
+            setEditingChannel(null);
+          }}
+          onSubmit={handleUpdateChannel}
+        />
+      )}
 
       {/* 删除确认弹窗 */}
       {deleteTarget && (
@@ -1802,6 +1751,7 @@ const EndpointsPage = () => {
         endpoint={detailTarget}
         isOpen={detailOpen}
         isSqliteMode={isSqliteMode}
+        failoverDefaultCooldownSeconds={failoverDefaultCooldownSeconds}
         onClose={closeEndpointDetail}
         onEdit={(ep) => {
           closeEndpointDetail();
