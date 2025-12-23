@@ -47,7 +47,11 @@ func (s *EndpointService) CreateEndpoint(ctx context.Context, record *store.Endp
 	if existing, err := s.store.GetByChannelAndName(ctx, record.Channel, record.Name); err != nil {
 		return nil, fmt.Errorf("校验端点名称失败: %w", err)
 	} else if existing != nil {
-		return nil, fmt.Errorf("渠道 '%s' 下端点 '%s' 已存在", record.Channel, record.Name)
+		return nil, fmt.Errorf(
+			"同一渠道内端点名称必须唯一：渠道 '%s' 已存在同名端点 '%s'，请修改名称或选择其他渠道",
+			record.Channel,
+			record.Name,
+		)
 	}
 
 	// 保存到数据库
@@ -130,7 +134,11 @@ func (s *EndpointService) UpdateEndpoint(ctx context.Context, record *store.Endp
 	if other, err := s.store.GetByChannelAndName(ctx, record.Channel, record.Name); err != nil {
 		return fmt.Errorf("校验端点名称失败: %w", err)
 	} else if other != nil && other.ID != record.ID {
-		return fmt.Errorf("渠道 '%s' 下端点 '%s' 已存在", record.Channel, record.Name)
+		return fmt.Errorf(
+			"同一渠道内端点名称必须唯一：渠道 '%s' 已存在同名端点 '%s'，请修改名称或选择其他渠道",
+			record.Channel,
+			record.Name,
+		)
 	}
 
 	// 更新数据库（按 ID）
@@ -443,18 +451,18 @@ func (s *EndpointService) GetEndpointWithHealth(ctx context.Context, name string
 	status := s.manager.GetEndpointStatus(endpoint.EndpointKey(record.Channel, record.Name))
 
 	return map[string]interface{}{
-		"id":                  record.ID,
-		"channel":             record.Channel,
-		"name":                record.Name,
-		"url":                 record.URL,
-		"token_masked":        maskToken(record.Token),
-		"priority":            record.Priority,
-		"failover_enabled":    record.FailoverEnabled,
-		"timeout_seconds":     record.TimeoutSeconds,
-		"cost_multiplier":     record.CostMultiplier,
-		"enabled":             record.Enabled,
-		"created_at":          record.CreatedAt,
-		"updated_at":          record.UpdatedAt,
+		"id":               record.ID,
+		"channel":          record.Channel,
+		"name":             record.Name,
+		"url":              record.URL,
+		"token_masked":     maskToken(record.Token),
+		"priority":         record.Priority,
+		"failover_enabled": record.FailoverEnabled,
+		"timeout_seconds":  record.TimeoutSeconds,
+		"cost_multiplier":  record.CostMultiplier,
+		"enabled":          record.Enabled,
+		"created_at":       record.CreatedAt,
+		"updated_at":       record.UpdatedAt,
 		"health": map[string]interface{}{
 			"healthy":          status.Healthy,
 			"never_checked":    status.NeverChecked,

@@ -56,23 +56,23 @@ type EndpointRecordInfo struct {
 
 // CreateEndpointInput 创建端点的输入参数
 type CreateEndpointInput struct {
-	Channel                     string            `json:"channel"`
-	Name                        string            `json:"name"`
-	URL                         string            `json:"url"`
-	Token                       string            `json:"token"`
-	ApiKey                      string            `json:"api_key"`
-	Headers                     map[string]string `json:"headers"`
-	Priority                    int               `json:"priority"`
-	FailoverEnabled             bool              `json:"failover_enabled"`
-	CooldownSeconds             *int              `json:"cooldown_seconds"`
-	TimeoutSeconds              int               `json:"timeout_seconds"`
-	SupportsCountTokens         bool              `json:"supports_count_tokens"`
-	CostMultiplier              float64           `json:"cost_multiplier"`
-	InputCostMultiplier         float64           `json:"input_cost_multiplier"`
-	OutputCostMultiplier        float64           `json:"output_cost_multiplier"`
-	CacheCreationCostMultiplier float64           `json:"cache_creation_cost_multiplier"`
-	CacheCreationCostMultiplier1h float64          `json:"cache_creation_cost_multiplier_1h"`
-	CacheReadCostMultiplier     float64           `json:"cache_read_cost_multiplier"`
+	Channel                       string            `json:"channel"`
+	Name                          string            `json:"name"`
+	URL                           string            `json:"url"`
+	Token                         string            `json:"token"`
+	ApiKey                        string            `json:"api_key"`
+	Headers                       map[string]string `json:"headers"`
+	Priority                      int               `json:"priority"`
+	FailoverEnabled               bool              `json:"failover_enabled"`
+	CooldownSeconds               *int              `json:"cooldown_seconds"`
+	TimeoutSeconds                int               `json:"timeout_seconds"`
+	SupportsCountTokens           bool              `json:"supports_count_tokens"`
+	CostMultiplier                float64           `json:"cost_multiplier"`
+	InputCostMultiplier           float64           `json:"input_cost_multiplier"`
+	OutputCostMultiplier          float64           `json:"output_cost_multiplier"`
+	CacheCreationCostMultiplier   float64           `json:"cache_creation_cost_multiplier"`
+	CacheCreationCostMultiplier1h float64           `json:"cache_creation_cost_multiplier_1h"`
+	CacheReadCostMultiplier       float64           `json:"cache_read_cost_multiplier"`
 }
 
 // EndpointStorageStatus 端点存储状态
@@ -258,24 +258,24 @@ func (a *App) CreateEndpointRecord(input CreateEndpointInput) error {
 	}
 
 	record := &store.EndpointRecord{
-		Channel:                     input.Channel,
-		Name:                        input.Name,
-		URL:                         input.URL,
-		Token:                       input.Token,
-		ApiKey:                      input.ApiKey,
-		Headers:                     input.Headers,
-		Priority:                    input.Priority,
-		FailoverEnabled:             input.FailoverEnabled,
-		CooldownSeconds:             input.CooldownSeconds,
-		TimeoutSeconds:              input.TimeoutSeconds,
-		SupportsCountTokens:         input.SupportsCountTokens,
-		CostMultiplier:              input.CostMultiplier,
-		InputCostMultiplier:         input.InputCostMultiplier,
-		OutputCostMultiplier:        input.OutputCostMultiplier,
-		CacheCreationCostMultiplier: input.CacheCreationCostMultiplier,
+		Channel:                       input.Channel,
+		Name:                          input.Name,
+		URL:                           input.URL,
+		Token:                         input.Token,
+		ApiKey:                        input.ApiKey,
+		Headers:                       input.Headers,
+		Priority:                      input.Priority,
+		FailoverEnabled:               input.FailoverEnabled,
+		CooldownSeconds:               input.CooldownSeconds,
+		TimeoutSeconds:                input.TimeoutSeconds,
+		SupportsCountTokens:           input.SupportsCountTokens,
+		CostMultiplier:                input.CostMultiplier,
+		InputCostMultiplier:           input.InputCostMultiplier,
+		OutputCostMultiplier:          input.OutputCostMultiplier,
+		CacheCreationCostMultiplier:   input.CacheCreationCostMultiplier,
 		CacheCreationCostMultiplier1h: input.CacheCreationCostMultiplier1h,
-		CacheReadCostMultiplier:     input.CacheReadCostMultiplier,
-		Enabled:                     false, // v5.0: 新建端点默认不激活，需手动激活
+		CacheReadCostMultiplier:       input.CacheReadCostMultiplier,
+		Enabled:                       false, // v5.0: 新建端点默认不激活，需手动激活
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -382,30 +382,34 @@ func (a *App) UpdateEndpointRecord(name string, input CreateEndpointInput) error
 	}
 
 	record := &store.EndpointRecord{
-		ID:                          existingRecord.ID,
-		Channel:                     channel,
-		Name:                        newName,
-		URL:                         input.URL,
-		Token:                       token,  // 空值时保留原有值
-		ApiKey:                      apiKey, // 空值时保留原有值
-		Headers:                     input.Headers,
-		Priority:                    input.Priority,
-		FailoverEnabled:             input.FailoverEnabled,
-		CooldownSeconds:             input.CooldownSeconds,
-		TimeoutSeconds:              input.TimeoutSeconds,
-		SupportsCountTokens:         input.SupportsCountTokens,
-		CostMultiplier:              input.CostMultiplier,
-		InputCostMultiplier:         input.InputCostMultiplier,
-		OutputCostMultiplier:        input.OutputCostMultiplier,
-		CacheCreationCostMultiplier: input.CacheCreationCostMultiplier,
+		ID:                            existingRecord.ID,
+		Channel:                       channel,
+		Name:                          newName,
+		URL:                           input.URL,
+		Token:                         token,  // 空值时保留原有值
+		ApiKey:                        apiKey, // 空值时保留原有值
+		Headers:                       input.Headers,
+		Priority:                      input.Priority,
+		FailoverEnabled:               input.FailoverEnabled,
+		CooldownSeconds:               input.CooldownSeconds,
+		TimeoutSeconds:                input.TimeoutSeconds,
+		SupportsCountTokens:           input.SupportsCountTokens,
+		CostMultiplier:                input.CostMultiplier,
+		InputCostMultiplier:           input.InputCostMultiplier,
+		OutputCostMultiplier:          input.OutputCostMultiplier,
+		CacheCreationCostMultiplier:   input.CacheCreationCostMultiplier,
 		CacheCreationCostMultiplier1h: cacheCreationCostMultiplier1h,
-		CacheReadCostMultiplier:     input.CacheReadCostMultiplier,
-		Enabled:                     existingRecord.Enabled, // 保持原有激活状态
+		CacheReadCostMultiplier:       input.CacheReadCostMultiplier,
+		Enabled:                       existingRecord.Enabled, // 保持原有激活状态
 	}
 
 	if err := endpointService.UpdateEndpoint(ctx, record); err != nil {
 		// 提示更清晰的“同渠道同名”冲突信息
 		msg := err.Error()
+		// EndpointService 已返回用户可读的冲突原因（避免上层泛化覆盖）
+		if strings.Contains(msg, "同一渠道内端点名称必须唯一") {
+			return err
+		}
 		if strings.Contains(msg, "UNIQUE constraint failed: endpoints.channel, endpoints.name") ||
 			strings.Contains(msg, "渠道 '") && strings.Contains(msg, " 已存在") {
 			return fmt.Errorf("同一渠道 '%s' 下已存在端点名称 '%s'，请修改名称或选择其他渠道", channel, newName)
@@ -509,29 +513,32 @@ func (a *App) UpdateEndpointRecordByID(id int64, input CreateEndpointInput) erro
 	}
 
 	record := &store.EndpointRecord{
-		ID:                          existingRecord.ID,
-		Channel:                     channel,
-		Name:                        newName,
-		URL:                         input.URL,
-		Token:                       token,  // 空值时保留原有值
-		ApiKey:                      apiKey, // 空值时保留原有值
-		Headers:                     input.Headers,
-		Priority:                    input.Priority,
-		FailoverEnabled:             input.FailoverEnabled,
-		CooldownSeconds:             input.CooldownSeconds,
-		TimeoutSeconds:              input.TimeoutSeconds,
-		SupportsCountTokens:         input.SupportsCountTokens,
-		CostMultiplier:              input.CostMultiplier,
-		InputCostMultiplier:         input.InputCostMultiplier,
-		OutputCostMultiplier:        input.OutputCostMultiplier,
-		CacheCreationCostMultiplier: input.CacheCreationCostMultiplier,
+		ID:                            existingRecord.ID,
+		Channel:                       channel,
+		Name:                          newName,
+		URL:                           input.URL,
+		Token:                         token,  // 空值时保留原有值
+		ApiKey:                        apiKey, // 空值时保留原有值
+		Headers:                       input.Headers,
+		Priority:                      input.Priority,
+		FailoverEnabled:               input.FailoverEnabled,
+		CooldownSeconds:               input.CooldownSeconds,
+		TimeoutSeconds:                input.TimeoutSeconds,
+		SupportsCountTokens:           input.SupportsCountTokens,
+		CostMultiplier:                input.CostMultiplier,
+		InputCostMultiplier:           input.InputCostMultiplier,
+		OutputCostMultiplier:          input.OutputCostMultiplier,
+		CacheCreationCostMultiplier:   input.CacheCreationCostMultiplier,
 		CacheCreationCostMultiplier1h: cacheCreationCostMultiplier1h,
-		CacheReadCostMultiplier:     input.CacheReadCostMultiplier,
-		Enabled:                     existingRecord.Enabled, // 保持原有激活状态
+		CacheReadCostMultiplier:       input.CacheReadCostMultiplier,
+		Enabled:                       existingRecord.Enabled, // 保持原有激活状态
 	}
 
 	if err := endpointService.UpdateEndpoint(ctx, record); err != nil {
 		msg := err.Error()
+		if strings.Contains(msg, "同一渠道内端点名称必须唯一") {
+			return err
+		}
 		if strings.Contains(msg, "UNIQUE constraint failed: endpoints.channel, endpoints.name") ||
 			(strings.Contains(msg, "渠道 '") && strings.Contains(msg, " 已存在")) {
 			return fmt.Errorf("同一渠道 '%s' 下已存在端点名称 '%s'，请修改名称或选择其他渠道", channel, newName)
@@ -923,9 +930,9 @@ func (a *App) GetChannels() ([]ChannelInfo, error) {
 }
 
 type CreateChannelInput struct {
-	Name    string `json:"name"`
-	Website string `json:"website,omitempty"`
-	Priority int   `json:"priority"`
+	Name     string `json:"name"`
+	Website  string `json:"website,omitempty"`
+	Priority int    `json:"priority"`
 }
 
 func (a *App) CreateChannel(input CreateChannelInput) error {

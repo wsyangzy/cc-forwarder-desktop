@@ -59,6 +59,18 @@ import {
   subscribeToEvent
 } from '@utils/wailsApi.js';
 
+const getErrorMessage = (error, fallback = '操作失败') => {
+  if (!error) return fallback;
+  if (typeof error === 'string') return error || fallback;
+  if (error instanceof Error) return error.message || fallback;
+  if (typeof error?.message === 'string' && error.message) return error.message;
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+};
+
 const DeleteChannelConfirmDialog = ({ channelName, endpointCount = 0, onConfirm, onCancel, loading }) => {
   const confirmDisabled = loading;
 
@@ -1110,7 +1122,7 @@ const EndpointsPage = () => {
       await loadGroups();
     } catch (err) {
       console.error('切换故障转移参与状态失败:', err);
-      alert(`操作失败: ${err.message}`);
+      alert(`操作失败: ${getErrorMessage(err, '未知错误')}`);
     } finally {
       setChannelActionLoading(false);
     }
@@ -1181,7 +1193,7 @@ const EndpointsPage = () => {
       }
     } catch (err) {
       console.error('批量健康检测失败:', err);
-      alert(`批量健康检测失败: ${err.message}`);
+      alert(`批量健康检测失败: ${getErrorMessage(err, '未知错误')}`);
     } finally {
       setBatchCheckLoading(false);
     }
@@ -1321,7 +1333,7 @@ const EndpointsPage = () => {
       await loadChannelsMeta();
     } catch (err) {
       console.error('创建渠道失败:', err);
-      setCreateChannelError(err?.message || '创建渠道失败');
+      setCreateChannelError(getErrorMessage(err, '创建渠道失败'));
     } finally {
       setChannelFormLoading(false);
     }
@@ -1352,7 +1364,7 @@ const EndpointsPage = () => {
       await loadGroups();
     } catch (err) {
       console.error('更新渠道失败:', err);
-      setEditChannelError(err?.message || '更新渠道失败');
+      setEditChannelError(getErrorMessage(err, '更新渠道失败'));
     } finally {
       setChannelFormLoading(false);
     }
@@ -1416,7 +1428,7 @@ const EndpointsPage = () => {
       await loadGroups();
     } catch (err) {
       console.error('删除失败:', err);
-      alert(`删除失败: ${err.message}`);
+      alert(`删除失败: ${getErrorMessage(err, '未知错误')}`);
     } finally {
       setDeleteLoading(false);
     }
@@ -1600,7 +1612,7 @@ const EndpointsPage = () => {
                   await loadGroups();
                 } catch (err) {
                   console.error('激活渠道失败:', err);
-                  alert(`激活失败: ${err.message}`);
+                  alert(`激活失败: ${getErrorMessage(err, '未知错误')}`);
                 } finally {
                   setChannelActionLoading(false);
                 }
@@ -1619,7 +1631,7 @@ const EndpointsPage = () => {
                   await loadGroups();
                 } catch (err) {
                   console.error('停用渠道失败:', err);
-                  alert(`停用失败: ${err.message}`);
+                  alert(`停用失败: ${getErrorMessage(err, '未知错误')}`);
                 } finally {
                   setChannelActionLoading(false);
                 }
@@ -1631,7 +1643,7 @@ const EndpointsPage = () => {
                   await loadGroups();
                 } catch (err) {
                   console.error('暂停渠道失败:', err);
-                  alert(`暂停失败: ${err.message}`);
+                  alert(`暂停失败: ${getErrorMessage(err, '未知错误')}`);
                 } finally {
                   setChannelActionLoading(false);
                 }
@@ -1643,7 +1655,7 @@ const EndpointsPage = () => {
                   await loadGroups();
                 } catch (err) {
                   console.error('恢复渠道失败:', err);
-                  alert(`恢复失败: ${err.message}`);
+                  alert(`恢复失败: ${getErrorMessage(err, '未知错误')}`);
                 } finally {
                   setChannelActionLoading(false);
                 }
@@ -1675,6 +1687,7 @@ const EndpointsPage = () => {
         <EndpointForm
           endpoint={editingEndpoint}
           channels={channelOptions}
+          existingEndpoints={isSqliteMode ? storageEndpoints : []}
           defaultChannel={defaultChannel}
           lockChannel={lockChannel}
           onSave={handleSave}
@@ -1739,7 +1752,7 @@ const EndpointsPage = () => {
               await loadChannelsMeta();
             } catch (err) {
               console.error('删除渠道失败:', err);
-              alert(`删除渠道失败: ${err.message}`);
+              alert(`删除渠道失败: ${getErrorMessage(err, '未知错误')}`);
             } finally {
               setDeleteChannelLoading(false);
             }
