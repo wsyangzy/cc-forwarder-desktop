@@ -40,7 +40,6 @@ func (sr SuspensionResult) String() string {
 type RequestLifecycleManager interface {
 	GetRequestID() string
 	SetEndpoint(name, group, channel string)
-	SetAuth(authType, authKey string)
 	SetModel(modelName string)                               // 简单设置模型
 	SetModelWithComparison(modelName, source string)        // 带对比的设置模型
 	HasModel() bool                                          // 检查是否已有模型

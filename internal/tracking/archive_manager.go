@@ -298,7 +298,6 @@ func (am *ArchiveManager) batchInsert(events []*ArchiveEvent) error {
 			request_id, client_ip, user_agent, method, path,
 			start_time, end_time, duration_ms,
 			channel, endpoint_name, group_name, model_name,
-			auth_type, auth_key,
 			status, http_status_code, retry_count,
 			failure_reason, cancel_reason,
 			is_streaming,
@@ -308,7 +307,7 @@ func (am *ArchiveManager) batchInsert(events []*ArchiveEvent) error {
 			input_cost_usd, output_cost_usd,
 			cache_creation_cost_usd, cache_creation_5m_cost_usd, cache_creation_1h_cost_usd,
 			cache_read_cost_usd, total_cost_usd
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		return fmt.Errorf("failed to prepare statement: %w", err)
@@ -343,8 +342,6 @@ func (am *ArchiveManager) batchInsert(events []*ArchiveEvent) error {
 			req.EndpointName,
 			req.GroupName,
 			req.ModelName,
-			req.AuthType,
-			req.AuthKey,
 			req.Status,
 			req.HTTPStatus,
 			req.RetryCount,

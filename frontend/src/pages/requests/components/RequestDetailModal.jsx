@@ -217,12 +217,6 @@ const RequestDetailModal = ({ isOpen, onClose, request }) => {
                   <InfoRow icon={Calendar} label="时间戳" value={formatTimestamp(request.timestamp)} />
                   <InfoRow icon={Clock} label="持续时间" value={formatDuration(request.duration)} />
                   <InfoRow icon={Server} label="端点" value={request.endpoint} />
-                  <InfoRow
-                    icon={Zap}
-                    label="认证"
-                    value={request.authKey ? (request.authType ? `${request.authType}:${request.authKey}` : request.authKey) : ''}
-                    copyable
-                  />
                   <InfoRow icon={Layers} label="渠道" value={request.channel || request.group} />
                 </div>
               </div>

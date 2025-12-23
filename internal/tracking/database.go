@@ -483,14 +483,6 @@ func (ut *UsageTracker) buildFlexibleUpdateQuery(event RequestEvent) (string, []
 		setParts = append(setParts, "group_name = ?")
 		args = append(args, *opts.GroupName)
 	}
-	if opts.AuthType != nil {
-		setParts = append(setParts, "auth_type = ?")
-		args = append(args, *opts.AuthType)
-	}
-	if opts.AuthKey != nil {
-		setParts = append(setParts, "auth_key = ?")
-		args = append(args, *opts.AuthKey)
-	}
 	if opts.Status != nil {
 		setParts = append(setParts, "status = ?")
 		args = append(args, *opts.Status)
@@ -1202,91 +1194,12 @@ ON CONFLICT(date, model_name, endpoint_name, group_name) DO UPDATE SET
 				slog.Error("Failed to update usage summary", "error", err)
 			} else {
 				slog.Info("Usage summary updated successfully")
-				// 同步更新按认证维度的汇总（用于区分不同 Token/API Key 的计费统计）
-				ut.updateUsageSummaryByAuth(startDate, endDate)
 			}
 		case <-ut.ctx.Done():
 			slog.Debug("Usage summary update cancelled due to context cancellation")
 		}
 	case <-ut.ctx.Done():
 		slog.Debug("Usage summary update cancelled due to context cancellation")
-	}
-}
-
-// updateUsageSummaryByAuth 更新按认证维度的使用汇总数据（使用写队列）
-// 注意：auth_key 是脱敏/指纹标识，不包含明文 Token/API Key。
-func (ut *UsageTracker) updateUsageSummaryByAuth(startDate, endDate time.Time) {
-	columns := []string{
-		"date", "model_name", "endpoint_name", "group_name", "auth_type", "auth_key",
-		"request_count", "success_count", "error_count",
-		"total_input_tokens", "total_output_tokens",
-		"total_cache_creation_tokens", "total_cache_read_tokens",
-		"total_cost_usd", "avg_duration_ms",
-		"created_at", "updated_at",
-	}
-
-	selectQuery := fmt.Sprintf(`
-SELECT
-	DATE(start_time) as date,
-	COALESCE(model_name, '') as model_name,
-	COALESCE(endpoint_name, '') as endpoint_name,
-	COALESCE(group_name, '') as group_name,
-	COALESCE(auth_type, '') as auth_type,
-	COALESCE(auth_key, '') as auth_key,
-	COUNT(*) as request_count,
-	SUM(CASE WHEN status IN ('completed', 'processing') THEN 1 ELSE 0 END) as success_count,
-	SUM(CASE WHEN status IN ('failed', 'error', 'auth_error', 'rate_limited', 'server_error', 'network_error', 'stream_error', 'timeout') THEN 1 ELSE 0 END) as error_count,
-	SUM(input_tokens) as total_input_tokens,
-	SUM(output_tokens) as total_output_tokens,
-	SUM(cache_creation_tokens) as total_cache_creation_tokens,
-	SUM(cache_read_tokens) as total_cache_read_tokens,
-	SUM(total_cost_usd) as total_cost_usd,
-	AVG(CASE WHEN duration_ms IS NOT NULL AND duration_ms > 0 THEN duration_ms ELSE NULL END) as avg_duration_ms,
-	%s as created_at,
-	%s as updated_at
-FROM request_logs
-WHERE start_time >= ? AND start_time < ?
-	AND (model_name IS NOT NULL OR endpoint_name IS NOT NULL)
-GROUP BY DATE(start_time), model_name, endpoint_name, group_name, auth_type, auth_key
-`, ut.adapter.BuildDateTimeNow(), ut.adapter.BuildDateTimeNow())
-
-	query := fmt.Sprintf(`INSERT INTO usage_summary_by_auth (%s)
-%s
-ON CONFLICT(date, model_name, endpoint_name, group_name, auth_type, auth_key) DO UPDATE SET
-	request_count = EXCLUDED.request_count,
-	success_count = EXCLUDED.success_count,
-	error_count = EXCLUDED.error_count,
-	total_input_tokens = EXCLUDED.total_input_tokens,
-	total_output_tokens = EXCLUDED.total_output_tokens,
-	total_cache_creation_tokens = EXCLUDED.total_cache_creation_tokens,
-	total_cache_read_tokens = EXCLUDED.total_cache_read_tokens,
-	total_cost_usd = EXCLUDED.total_cost_usd,
-	avg_duration_ms = EXCLUDED.avg_duration_ms,
-	updated_at = EXCLUDED.updated_at
-`, strings.Join(columns, ", "), selectQuery)
-
-	summaryWriteReq := WriteRequest{
-		Query:     query,
-		Args:      []interface{}{startDate, endDate.AddDate(0, 0, 1)},
-		Response:  make(chan error, 1),
-		Context:   context.Background(),
-		EventType: "update_summary_by_auth",
-	}
-
-	select {
-	case ut.writeQueue <- summaryWriteReq:
-		select {
-		case err := <-summaryWriteReq.Response:
-			if err != nil {
-				slog.Error("Failed to update usage summary by auth", "error", err)
-			} else {
-				slog.Info("Usage summary by auth updated successfully")
-			}
-		case <-ut.ctx.Done():
-			slog.Debug("Usage summary by auth update cancelled due to context cancellation")
-		}
-	case <-ut.ctx.Done():
-		slog.Debug("Usage summary by auth update cancelled due to context cancellation")
 	}
 }
 

@@ -24,8 +24,6 @@ type ActiveRequest struct {
 	Channel       string `json:"channel"`        // 渠道标签（来自端点配置）
 	EndpointName  string `json:"endpoint_name"`  // 当前使用的端点
 	GroupName     string `json:"group_name"`     // 当前使用的组
-	AuthType      string `json:"auth_type"`      // 认证类型：token/api_key
-	AuthKey       string `json:"auth_key"`       // 认证标识（脱敏/指纹），不含明文
 	RetryCount    int    `json:"retry_count"`    // 重试次数
 	HTTPStatus    int    `json:"http_status"`    // HTTP状态码
 	ModelName     string `json:"model_name"`     // 模型名称

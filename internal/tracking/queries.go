@@ -59,8 +59,6 @@ type RequestDetail struct {
 	EndpointName string `json:"endpoint_name"`
 	GroupName    string `json:"group_name"`
 	ModelName    string `json:"model_name"`
-	AuthType     string `json:"auth_type"`    // token / api_key / ''
-	AuthKey      string `json:"auth_key"`     // 脱敏标识（指纹/别名@指纹），不含明文
 	IsStreaming  bool   `json:"is_streaming"` // 是否为流式请求
 
 	Status         string `json:"status"`
@@ -254,8 +252,6 @@ func (ut *UsageTracker) QueryRequestDetails(ctx context.Context, opts *QueryOpti
 		COALESCE(endpoint_name, '') as endpoint_name,
 		COALESCE(group_name, '') as group_name,
 		COALESCE(model_name, '') as model_name,
-		COALESCE(auth_type, '') as auth_type,
-		COALESCE(auth_key, '') as auth_key,
 		COALESCE(is_streaming, false) as is_streaming,
 		status, http_status_code, retry_count,
 		COALESCE(failure_reason, '') as failure_reason,
@@ -361,7 +357,7 @@ func (ut *UsageTracker) QueryRequestDetails(ctx context.Context, opts *QueryOpti
 			&detail.ClientIP, &detail.UserAgent, &detail.Method, &detail.Path,
 			&detail.StartTime, &detail.EndTime, &detail.DurationMs,
 			&detail.Channel, &detail.EndpointName, &detail.GroupName, &detail.ModelName,
-			&detail.AuthType, &detail.AuthKey, &detail.IsStreaming,
+			&detail.IsStreaming,
 			&detail.Status, &detail.HTTPStatusCode, &detail.RetryCount,
 			&detail.FailureReason, &detail.LastFailureReason, &detail.CancelReason,
 			&detail.InputTokens, &detail.OutputTokens,

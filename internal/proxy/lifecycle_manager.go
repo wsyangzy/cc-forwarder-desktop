@@ -53,8 +53,6 @@ type RequestLifecycleManager struct {
 	channel               string                         // 渠道标签
 	endpointName          string                         // 端点名称
 	groupName             string                         // 组名称
-	authType              string                         // 认证类型：token/api_key
-	authKey               string                         // 认证标识（脱敏/指纹）
 	retryCount            int                            // 重试计数
 	lastStatus            string                         // 最后状态
 	lastError             error                          // 最后一次错误
@@ -424,20 +422,6 @@ func (rlm *RequestLifecycleManager) SetEndpoint(endpointName, groupName, channel
 			EndpointName: &endpointName,
 			GroupName:    &groupName,
 			Channel:      &channel,
-		})
-	}
-}
-
-// SetAuth 设置请求的认证标识（不包含明文 Token/API Key）
-// 用于按 Token/API Key 维度进行计费统计与问题排查。
-func (rlm *RequestLifecycleManager) SetAuth(authType, authKey string) {
-	rlm.authType = authType
-	rlm.authKey = authKey
-
-	if rlm.usageTracker != nil && rlm.requestID != "" {
-		rlm.usageTracker.RecordRequestUpdate(rlm.requestID, tracking.UpdateOptions{
-			AuthType: &authType,
-			AuthKey:  &authKey,
 		})
 	}
 }

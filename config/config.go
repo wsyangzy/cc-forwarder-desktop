@@ -399,6 +399,10 @@ func (c *Config) setDefaults() {
 	// RequestSuspend.Enabled defaults to false (zero value) for backward compatibility
 
 	// Set usage tracking defaults
+	// 兼容：若使用新版配置 usage_tracking.database.path，则统一写入 database_path 供内部使用。
+	if c.UsageTracking.Database != nil && strings.TrimSpace(c.UsageTracking.Database.Path) != "" {
+		c.UsageTracking.DatabasePath = strings.TrimSpace(c.UsageTracking.Database.Path)
+	}
 	if c.UsageTracking.DatabasePath == "" {
 		// 使用跨平台用户目录作为默认路径
 		// Windows: %APPDATA%\CC-Forwarder\data\cc-forwarder.db

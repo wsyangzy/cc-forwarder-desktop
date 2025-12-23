@@ -138,11 +138,6 @@ func (rh *RegularHandler) HandleRegularRequestUnified(ctx context.Context, w htt
 				routeGroup = endpoint.Config.Name
 			}
 			lifecycleManager.SetEndpoint(endpoint.Config.Name, routeGroup, endpoint.Config.Channel)
-			if authType, authKey := rh.endpointManager.GetAuthIdentityForEndpoint(endpoint); authType != "" && authKey != "" {
-				lifecycleManager.SetAuth(authType, authKey)
-			} else {
-				lifecycleManager.SetAuth("", "")
-			}
 			lifecycleManager.UpdateStatus("forwarding", i, 0)
 
 			// 🔧 [端点上下文修复] 立即设置端点信息到请求上下文，确保所有分支（成功/失败/取消）的日志都能正确记录端点

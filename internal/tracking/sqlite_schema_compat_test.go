@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// 回归测试：旧库 request_logs 缺少新列（例如 auth_key）时，InitSchema 不应直接因 schema.sql 中索引创建失败而报错。
+// 回归测试：旧库缺少后续新增列时，InitSchema 应能通过 migrateSchema 补齐关键列，避免启动失败。
 func TestSQLiteAdapter_InitSchema_LegacyDBMissingColumns(t *testing.T) {
 	t.Parallel()
 
@@ -24,8 +24,8 @@ func TestSQLiteAdapter_InitSchema_LegacyDBMissingColumns(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	t.Cleanup(cancel)
 
-	// 1) 造一个“旧版本”数据库：request_logs/endpoints/channels 存在，但缺少后续新增列（auth_key、缓存字段等）。
-	// 注意：旧表存在时，schema.sql 的 CREATE TABLE IF NOT EXISTS 不会补列，随后 CREATE INDEX(auth_key) 会报错。
+	// 1) 造一个“旧版本”数据库：request_logs/endpoints/channels 存在，但缺少后续新增列（5m/1h 缓存字段、端点超时、渠道优先级等）。
+	// 注意：旧表存在时，schema.sql 的 CREATE TABLE IF NOT EXISTS 不会补列，需要 migrateSchema 补齐。
 	_, err = db.ExecContext(ctx, `
 CREATE TABLE IF NOT EXISTS request_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -107,12 +107,19 @@ CREATE TABLE IF NOT EXISTS channels (
 		t.Fatalf("adapter.InitSchema: %v", err)
 	}
 
-	// 3) 验证关键列/表已存在
-	if !sqliteColumnExists(t, adapter.db, "request_logs", "auth_key") {
-		t.Fatalf("expected request_logs.auth_key to exist after InitSchema")
+	// 3) 验证关键列已存在（由 migrateSchema 补齐）
+	for _, c := range []string{"cache_creation_5m_tokens", "cache_creation_1h_tokens", "cache_creation_5m_cost_usd", "cache_creation_1h_cost_usd"} {
+		if !sqliteColumnExists(t, adapter.db, "request_logs", c) {
+			t.Fatalf("expected request_logs.%s to exist after InitSchema", c)
+		}
 	}
-	if !sqliteTableExists(t, adapter.db, "usage_summary_by_auth") {
-		t.Fatalf("expected usage_summary_by_auth table to exist after InitSchema")
+	for _, c := range []string{"timeout_seconds", "supports_count_tokens"} {
+		if !sqliteColumnExists(t, adapter.db, "endpoints", c) {
+			t.Fatalf("expected endpoints.%s to exist after InitSchema", c)
+		}
+	}
+	if !sqliteColumnExists(t, adapter.db, "channels", "priority") {
+		t.Fatalf("expected channels.priority to exist after InitSchema")
 	}
 }
 
@@ -143,19 +150,5 @@ func sqliteColumnExists(t *testing.T, db *sql.DB, table, column string) bool {
 	if err := rows.Err(); err != nil {
 		t.Fatalf("iterate pragma rows: %v", err)
 	}
-	return false
-}
-
-func sqliteTableExists(t *testing.T, db *sql.DB, table string) bool {
-	t.Helper()
-	var name string
-	err := db.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name = ? LIMIT 1", table).Scan(&name)
-	if err == nil {
-		return name == table
-	}
-	if err == sql.ErrNoRows {
-		return false
-	}
-	t.Fatalf("sqlite_master query: %v", err)
 	return false
 }

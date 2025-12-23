@@ -689,13 +689,10 @@ func (a *App) syncEndpointMultipliersToTracker(ctx context.Context) {
 // - usage tracker (request_logs / usage_summary / ...)
 // - management stores (channels/endpoints/settings/model_pricing)
 //
-// 优先级：usage_tracking.database.path > usage_tracking.database_path > 默认用户目录。
+// 统一数据库路径：内部只使用 UsageTracking.DatabasePath（由 config.SetDefaults 将 database.path 归一到该字段）。
 func (a *App) getEffectiveUsageDBPath() string {
 	if a == nil || a.config == nil {
 		return ""
-	}
-	if a.config.UsageTracking.Database != nil && a.config.UsageTracking.Database.Path != "" {
-		return a.config.UsageTracking.Database.Path
 	}
 	if a.config.UsageTracking.DatabasePath != "" {
 		return a.config.UsageTracking.DatabasePath
@@ -713,9 +710,6 @@ func (a *App) setupUsageTracker() {
 	// 统一数据库路径（避免 Database.Path 为空时回退到工作目录，导致历史数据“看不到/分裂”）
 	dbPath := a.getEffectiveUsageDBPath()
 	a.config.UsageTracking.DatabasePath = dbPath
-	if a.config.UsageTracking.Database != nil && a.config.UsageTracking.Database.Path == "" {
-		a.config.UsageTracking.Database.Path = dbPath
-	}
 
 	// v6.1+ 自动迁移：如果新库不存在但旧库存在，则复制旧库到新路径。
 	a.migrateLegacyDatabaseIfNeeded()
@@ -760,9 +754,6 @@ func (a *App) setupStoreDB() {
 	dbPath := a.getEffectiveUsageDBPath()
 	// 运行时回填，确保后续组件拿到统一路径（即使 usage_tracking.enabled=false）。
 	a.config.UsageTracking.DatabasePath = dbPath
-	if a.config.UsageTracking.Database != nil && a.config.UsageTracking.Database.Path == "" {
-		a.config.UsageTracking.Database.Path = dbPath
-	}
 
 	// 即使未启用 usage tracking，也执行旧库迁移，避免共享 usage.db 导致锁冲突。
 	a.migrateLegacyDatabaseIfNeeded()

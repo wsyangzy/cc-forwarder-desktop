@@ -610,8 +610,6 @@ export namespace main {
 	    endpoint: string;
 	    group: string;
 	    model: string;
-	    auth_type?: string;
-	    auth_key?: string;
 	    status: string;
 	    http_status: number;
 	    retry_count: number;
@@ -640,8 +638,6 @@ export namespace main {
 	        this.endpoint = source["endpoint"];
 	        this.group = source["group"];
 	        this.model = source["model"];
-	        this.auth_type = source["auth_type"];
-	        this.auth_key = source["auth_key"];
 	        this.status = source["status"];
 	        this.http_status = source["http_status"];
 	        this.retry_count = source["retry_count"];

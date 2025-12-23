@@ -282,8 +282,6 @@ export const fetchRequests = async (params = {}) => {
     channel: request.channel || '',
     endpoint: request.endpoint_name || request.endpoint || 'unknown',
     group: request.group_name || request.group || 'default',
-    authType: request.auth_type || request.authType || '',
-    authKey: request.auth_key || request.authKey || '',
     duration: request.duration_ms || request.duration || 0,
     inputTokens: request.input_tokens || request.inputTokens || 0,
     outputTokens: request.output_tokens || request.outputTokens || 0,

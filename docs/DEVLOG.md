@@ -204,6 +204,7 @@
 关键变更：
 - `channels` 增加 `priority INTEGER DEFAULT 1`
 - 读取渠道列表时按稳定排序：`priority ASC, created_at DESC, name ASC`（store 层）
+- 说明：本版本以“端点”为统计/追踪维度，不引入“按 Token/API Key 聚合统计”的额外字段与汇总表（该需求已废案）。
 
 ### 4.2 时间字段解析兼容
 
@@ -386,3 +387,17 @@
 
 说明：
 - 全量 `go test ./...` 可能因历史 integration tests 与平台差异（cgo/toolchain/旧字段）失败，和本轮变更不必然相关；建议针对改动模块运行对应单测集即可。
+
+---
+
+## 9. 已废弃/移除（避免后续重复引入）
+
+### 9.1 按 Token 聚合统计（废案）
+
+结论：
+- “同渠道多端点不同 Token 可用性验证”是运行时行为验证；统计与展示维度以端点为准即可。
+- 按 Token/API Key 聚合会与端点维度高度重合，并引入额外 schema/migration/兼容复杂度，属于冗余（YAGNI）。
+
+已移除（代表性落点）：
+- 请求追踪：不再展示“认证”字段（仅保留端点/渠道/模型/状态等信息）。
+- 数据库 schema：不再创建 `usage_summary_by_auth`，也不再要求 `request_logs` 拥有认证维度列。

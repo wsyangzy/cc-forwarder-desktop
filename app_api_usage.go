@@ -196,8 +196,6 @@ type RequestRecord struct {
 	Endpoint              string  `json:"endpoint"`
 	Group                 string  `json:"group"`
 	Model                 string  `json:"model"`
-	AuthType              string  `json:"auth_type,omitempty"` // token / api_key / ''
-	AuthKey               string  `json:"auth_key,omitempty"`  // 脱敏标识（指纹/别名@指纹），不含明文
 	Status                string  `json:"status"`
 	HTTPStatus            int     `json:"http_status"`
 	RetryCount            int     `json:"retry_count"`              // 重试次数
@@ -329,8 +327,6 @@ func (a *App) GetRequests(params RequestQueryParams) (RequestListResult, error) 
 			Endpoint:              r.EndpointName,
 			Group:                 r.GroupName,
 			Model:                 r.ModelName,
-			AuthType:              r.AuthType,
-			AuthKey:               r.AuthKey,
 			Status:                r.Status,
 			RetryCount:            r.RetryCount,
 			FailureReason:         r.FailureReason,

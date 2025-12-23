@@ -247,11 +247,6 @@ func (sh *StreamingHandler) executeStreamingWithRetry(ctx context.Context, w htt
 			routeGroup = ep.Config.Name
 		}
 		lifecycleManager.SetEndpoint(ep.Config.Name, routeGroup, ep.Config.Channel)
-		if authType, authKey := sh.endpointManager.GetAuthIdentityForEndpoint(ep); authType != "" && authKey != "" {
-			lifecycleManager.SetAuth(authType, authKey)
-		} else {
-			lifecycleManager.SetAuth("", "")
-		}
 		lifecycleManager.UpdateStatus("forwarding", i, 0)
 
 		// 🔧 [端点上下文修复] 立即设置端点信息到请求上下文，确保所有分支（成功/失败/取消）的日志都能正确记录端点

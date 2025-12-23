@@ -289,8 +289,6 @@ func (eh *ErrorHandler) performSimpleBackup(ctx context.Context, backupDB *sql.D
 		endpoint_name TEXT,
 		group_name TEXT,
 		model_name TEXT,
-		auth_type TEXT DEFAULT '',
-		auth_key TEXT DEFAULT '',
 		status TEXT NOT NULL DEFAULT 'pending',
 		http_status_code INTEGER,
 		retry_count INTEGER DEFAULT 0,
@@ -325,28 +323,6 @@ func (eh *ErrorHandler) performSimpleBackup(ctx context.Context, backupDB *sql.D
 		created_at DATETIME DEFAULT (datetime('now', 'localtime')),
 		updated_at DATETIME DEFAULT (datetime('now', 'localtime')),
 		UNIQUE(date, model_name, endpoint_name, group_name)
-	);
-
-	CREATE TABLE IF NOT EXISTS usage_summary_by_auth (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		date TEXT NOT NULL,
-		model_name TEXT NOT NULL,
-		endpoint_name TEXT NOT NULL,
-		group_name TEXT,
-		auth_type TEXT NOT NULL DEFAULT '',
-		auth_key TEXT NOT NULL DEFAULT '',
-		request_count INTEGER DEFAULT 0,
-		success_count INTEGER DEFAULT 0,
-		error_count INTEGER DEFAULT 0,
-		total_input_tokens INTEGER DEFAULT 0,
-		total_output_tokens INTEGER DEFAULT 0,
-		total_cache_creation_tokens INTEGER DEFAULT 0,
-		total_cache_read_tokens INTEGER DEFAULT 0,
-		total_cost_usd REAL DEFAULT 0,
-		avg_duration_ms REAL DEFAULT 0,
-		created_at DATETIME DEFAULT (datetime('now', 'localtime')),
-		updated_at DATETIME DEFAULT (datetime('now', 'localtime')),
-		UNIQUE(date, model_name, endpoint_name, group_name, auth_type, auth_key)
 	);`
 
 	if _, err := backupDB.ExecContext(ctx, schemaSQL); err != nil {
@@ -374,8 +350,6 @@ func (eh *ErrorHandler) performSimpleBackup(ctx context.Context, backupDB *sql.D
 			   COALESCE(endpoint_name, '') as endpoint_name, 
 			   COALESCE(group_name, '') as group_name, 
 			   COALESCE(model_name, '') as model_name, 
-			   COALESCE(auth_type, '') as auth_type,
-			   COALESCE(auth_key, '') as auth_key,
 			   status, http_status_code, retry_count,
 			   input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
 			   input_cost_usd, output_cost_usd, cache_creation_cost_usd, cache_read_cost_usd, 
@@ -390,11 +364,11 @@ func (eh *ErrorHandler) performSimpleBackup(ctx context.Context, backupDB *sql.D
 	stmt, err := backupDB.PrepareContext(ctx, `
 		INSERT INTO request_logs (
 			request_id, client_ip, user_agent, method, path, start_time, end_time, duration_ms,
-			channel, endpoint_name, group_name, model_name, auth_type, auth_key, status, http_status_code, retry_count,
+			channel, endpoint_name, group_name, model_name, status, http_status_code, retry_count,
 			input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
 			input_cost_usd, output_cost_usd, cache_creation_cost_usd, cache_read_cost_usd,
 			total_cost_usd, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		return fmt.Errorf("failed to prepare insert statement: %w", err)
@@ -408,7 +382,7 @@ func (eh *ErrorHandler) performSimpleBackup(ctx context.Context, backupDB *sql.D
 			&r.RequestID, &r.ClientIP, &r.UserAgent, &r.Method, &r.Path,
 			&r.StartTime, &r.EndTime, &r.DurationMs, &r.Channel,
 			&r.EndpointName, &r.GroupName, &r.ModelName,
-			&r.AuthType, &r.AuthKey, &r.Status, &r.HTTPStatusCode, &r.RetryCount,
+			&r.Status, &r.HTTPStatusCode, &r.RetryCount,
 			&r.InputTokens, &r.OutputTokens, &r.CacheCreationTokens, &r.CacheReadTokens,
 			&r.InputCostUSD, &r.OutputCostUSD, &r.CacheCreationCostUSD, &r.CacheReadCostUSD,
 			&r.TotalCostUSD, &r.CreatedAt, &r.UpdatedAt,
@@ -420,7 +394,7 @@ func (eh *ErrorHandler) performSimpleBackup(ctx context.Context, backupDB *sql.D
 		_, err = stmt.ExecContext(ctx,
 			r.RequestID, r.ClientIP, r.UserAgent, r.Method, r.Path,
 			r.StartTime, r.EndTime, r.DurationMs, r.Channel,
-			r.EndpointName, r.GroupName, r.ModelName, r.AuthType, r.AuthKey,
+			r.EndpointName, r.GroupName, r.ModelName,
 			r.Status, r.HTTPStatusCode, r.RetryCount,
 			r.InputTokens, r.OutputTokens, r.CacheCreationTokens, r.CacheReadTokens,
 			r.InputCostUSD, r.OutputCostUSD, r.CacheCreationCostUSD, r.CacheReadCostUSD,
