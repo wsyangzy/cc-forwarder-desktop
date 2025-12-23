@@ -21,6 +21,8 @@ export function DeleteChannel(arg1:string,arg2:boolean):Promise<void>;
 
 export function DeleteEndpointRecord(arg1:string):Promise<void>;
 
+export function DeleteEndpointRecordByID(arg1:number):Promise<void>;
+
 export function DeleteModelPricing(arg1:string):Promise<void>;
 
 export function GetAllSettings():Promise<Array<main.SettingInfo>>;
@@ -97,6 +99,8 @@ export function SetDefaultModelPricing(arg1:string):Promise<void>;
 
 export function SetEndpointFailoverEnabled(arg1:string,arg2:boolean):Promise<void>;
 
+export function SetEndpointFailoverEnabledByID(arg1:number,arg2:boolean):Promise<void>;
+
 export function SetEndpointPriority(arg1:string,arg2:number):Promise<void>;
 
 export function StartLogStream():Promise<void>;
@@ -107,11 +111,15 @@ export function SwitchKey(arg1:string,arg2:string,arg3:number):Promise<main.Swit
 
 export function ToggleEndpointRecord(arg1:string,arg2:boolean):Promise<void>;
 
+export function ToggleEndpointRecordByID(arg1:number,arg2:boolean):Promise<void>;
+
 export function TriggerHealthCheck(arg1:string):Promise<void>;
 
 export function UpdateChannel(arg1:main.UpdateChannelInput):Promise<void>;
 
 export function UpdateEndpointRecord(arg1:string,arg2:main.CreateEndpointInput):Promise<void>;
+
+export function UpdateEndpointRecordByID(arg1:number,arg2:main.CreateEndpointInput):Promise<void>;
 
 export function UpdateModelPricing(arg1:string,arg2:main.CreateModelPricingInput):Promise<void>;
 

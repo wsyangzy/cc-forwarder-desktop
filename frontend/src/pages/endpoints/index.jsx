@@ -42,10 +42,10 @@ import {
   getEndpointStorageStatus,
   getEndpointRecords,
   createEndpointRecord,
-  updateEndpointRecord,
-  deleteEndpointRecord,
-  toggleEndpointRecord,
-  setEndpointFailoverEnabled,
+  updateEndpointRecordByID,
+  deleteEndpointRecordByID,
+  toggleEndpointRecordByID,
+  setEndpointFailoverEnabledByID,
   getChannels,
   createChannel,
   updateChannel,
@@ -1102,10 +1102,10 @@ const EndpointsPage = () => {
   }, []);
 
   const handleToggleEndpointFailover = useCallback(async (endpoint, enabled) => {
-    if (!endpoint?.name) return;
+    if (!endpoint?.id) return;
     try {
       setChannelActionLoading(true);
-      await setEndpointFailoverEnabled(endpoint.name, enabled);
+      await setEndpointFailoverEnabledByID(endpoint.id, enabled);
       await loadStorageStatus();
       await loadGroups();
     } catch (err) {
@@ -1383,7 +1383,7 @@ const EndpointsPage = () => {
     try {
       if (editingEndpoint) {
         // 编辑模式
-        await updateEndpointRecord(editingEndpoint.name, formData);
+        await updateEndpointRecordByID(editingEndpoint.id, formData);
       } else {
         // 新建模式
         await createEndpointRecord(formData);
@@ -1409,7 +1409,7 @@ const EndpointsPage = () => {
 
     setDeleteLoading(true);
     try {
-      await deleteEndpointRecord(deleteTarget.name);
+      await deleteEndpointRecordByID(deleteTarget.id);
       setDeleteTarget(null);
       // 刷新列表
       await loadStorageStatus();
@@ -1612,9 +1612,9 @@ const EndpointsPage = () => {
 
                 try {
                   setChannelActionLoading(true);
-                  const representative = storageEndpoints.find(e => e.channel === channelName)?.name;
-                  if (!representative) throw new Error('未找到可用于停用的端点记录');
-                  await toggleEndpointRecord(representative, false);
+                  const representativeId = storageEndpoints.find(e => e.channel === channelName)?.id;
+                  if (!representativeId) throw new Error('未找到可用于停用的端点记录');
+                  await toggleEndpointRecordByID(representativeId, false);
                   await loadStorageStatus();
                   await loadGroups();
                 } catch (err) {

@@ -115,7 +115,7 @@ func NewManager(cfg *config.Config) *Manager {
 		if apiKeyCount == 0 && endpointCfg.ApiKey != "" {
 			apiKeyCount = 1 // 单 API Key 算作 1 个
 		}
-		manager.keyManager.InitEndpoint(endpointCfg.Name, tokenCount, apiKeyCount)
+		manager.keyManager.InitEndpoint(endpointKeyFromConfig(endpointCfg), tokenCount, apiKeyCount)
 	}
 
 	// Set manager reference in fast tester for dynamic token resolution
@@ -169,7 +169,7 @@ func (m *Manager) UpdateConfig(cfg *config.Config) {
 func (m *Manager) GetTokenForEndpoint(ep *Endpoint) string {
 	// 1. 优先使用多 Tokens 配置（端点独立管理）
 	if len(ep.Config.Tokens) > 0 {
-		activeIndex := m.keyManager.GetActiveTokenIndex(ep.Config.Name)
+		activeIndex := m.keyManager.GetActiveTokenIndex(endpointKeyFromConfig(ep.Config))
 		if activeIndex >= 0 && activeIndex < len(ep.Config.Tokens) {
 			return ep.Config.Tokens[activeIndex].Value
 		}
@@ -215,7 +215,7 @@ func (m *Manager) GetTokenForEndpoint(ep *Endpoint) string {
 func (m *Manager) GetApiKeyForEndpoint(ep *Endpoint) string {
 	// 1. 优先使用多 ApiKeys 配置（端点独立管理）
 	if len(ep.Config.ApiKeys) > 0 {
-		activeIndex := m.keyManager.GetActiveApiKeyIndex(ep.Config.Name)
+		activeIndex := m.keyManager.GetActiveApiKeyIndex(endpointKeyFromConfig(ep.Config))
 		if activeIndex >= 0 && activeIndex < len(ep.Config.ApiKeys) {
 			return ep.Config.ApiKeys[activeIndex].Value
 		}

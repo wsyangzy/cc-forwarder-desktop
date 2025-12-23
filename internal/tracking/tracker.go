@@ -1804,7 +1804,12 @@ func (ut *UsageTracker) ActiveRequestToDetail(req *ActiveRequest) RequestDetail 
 			// 获取端点倍率
 			var multiplier *EndpointMultiplier
 			if ut.endpointMu != nil {
-				if m, ok := ut.endpointMu[req.EndpointName]; ok {
+				if key := endpointMultiplierKey(req.Channel, req.GroupName, req.EndpointName); key != "" {
+					if m, ok := ut.endpointMu[key]; ok {
+						multiplier = &m
+					}
+				} else if m, ok := ut.endpointMu[req.EndpointName]; ok {
+					// 兼容旧 key：endpointName 作为唯一键
 					multiplier = &m
 				}
 			}

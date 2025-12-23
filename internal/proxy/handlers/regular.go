@@ -298,15 +298,15 @@ func (rh *RegularHandler) HandleRegularRequestUnified(ctx context.Context, w htt
 			failedEndpointNames := make([]string, 0, len(endpoints))
 			seen := make(map[string]struct{}, len(endpoints))
 			for _, ep := range endpoints {
-				name := ep.Config.Name
-				if name == "" {
+				key := endpoint.EndpointKey(ep.Config.Channel, ep.Config.Name)
+				if key == "" {
 					continue
 				}
-				if _, ok := seen[name]; ok {
+				if _, ok := seen[key]; ok {
 					continue
 				}
-				seen[name] = struct{}{}
-				failedEndpointNames = append(failedEndpointNames, name)
+				seen[key] = struct{}{}
+				failedEndpointNames = append(failedEndpointNames, key)
 			}
 
 			newChannel, err := rh.endpointManager.TriggerRequestFailoverWithFailedEndpoints(

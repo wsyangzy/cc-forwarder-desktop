@@ -824,11 +824,53 @@ export const updateEndpointRecord = async (name, input) => {
   return { success: true };
 };
 
+/**
+ * 更新端点配置（按ID，避免同名歧义）
+ * @param {number} id - 端点ID
+ * @param {Object} input - 更新的配置
+ * @returns {Promise<void>}
+ */
+export const updateEndpointRecordByID = async (id, input) => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+
+  const record = {
+    channel: input.channel || '',
+    name: input.name || '',
+    url: input.url || '',
+    token: input.token || '',
+    api_key: input.apiKey || '',
+    headers: input.headers || {},
+    priority: parseInt(input.priority) || 1,
+    failover_enabled: input.failoverEnabled !== false,
+    cooldown_seconds: input.cooldownSeconds ? parseInt(input.cooldownSeconds) : null,
+    timeout_seconds: parseInt(input.timeoutSeconds) || 300,
+    supports_count_tokens: input.supportsCountTokens || false,
+    cost_multiplier: parseFloat(input.costMultiplier) || 1.0,
+    input_cost_multiplier: parseFloat(input.inputCostMultiplier) || 1.0,
+    output_cost_multiplier: parseFloat(input.outputCostMultiplier) || 1.0,
+    cache_creation_cost_multiplier: parseFloat(input.cacheCreationCostMultiplier) || 1.0,
+    cache_creation_cost_multiplier_1h: parseFloat(input.cacheCreationCostMultiplier1h) || 1.0,
+    cache_read_cost_multiplier: parseFloat(input.cacheReadCostMultiplier) || 1.0
+  };
+
+  await WailsApp.UpdateEndpointRecordByID(id, record);
+  return { success: true };
+};
+
 export const setEndpointFailoverEnabled = async (name, enabled) => {
   await initWails();
   if (!WailsApp) throw new Error('Wails not available');
 
   await WailsApp.SetEndpointFailoverEnabled(name, !!enabled);
+  return { success: true };
+};
+
+export const setEndpointFailoverEnabledByID = async (id, enabled) => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+
+  await WailsApp.SetEndpointFailoverEnabledByID(id, !!enabled);
   return { success: true };
 };
 
@@ -845,6 +887,14 @@ export const deleteEndpointRecord = async (name) => {
   return { success: true };
 };
 
+export const deleteEndpointRecordByID = async (id) => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+
+  await WailsApp.DeleteEndpointRecordByID(id);
+  return { success: true };
+};
+
 /**
  * 切换端点启用状态
  * @param {string} name - 端点名称
@@ -856,6 +906,14 @@ export const toggleEndpointRecord = async (name, enabled) => {
   if (!WailsApp) throw new Error('Wails not available');
 
   await WailsApp.ToggleEndpointRecord(name, enabled);
+  return { success: true };
+};
+
+export const toggleEndpointRecordByID = async (id, enabled) => {
+  await initWails();
+  if (!WailsApp) throw new Error('Wails not available');
+
+  await WailsApp.ToggleEndpointRecordByID(id, enabled);
   return { success: true };
 };
 

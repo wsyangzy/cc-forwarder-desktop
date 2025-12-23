@@ -70,6 +70,14 @@ type PortInfo struct {
 	WasOccupied   bool `json:"was_occupied"`
 }
 
+func (a *App) errSettingsServiceDisabled() error {
+	dbPath := a.getEffectiveUsageDBPath()
+	if dbPath != "" {
+		return fmt.Errorf("设置服务未启用（管理数据库未就绪，db=%s）。请稍等重试；若一直失败，请检查是否有另一个 CC-Forwarder 实例占用数据库或重启应用。", dbPath)
+	}
+	return fmt.Errorf("设置服务未启用（管理数据库未就绪）。请稍等重试；若一直失败，请检查是否有另一个 CC-Forwarder 实例占用数据库或重启应用。")
+}
+
 // GetSettingsStorageStatus 获取设置存储状态
 func (a *App) GetSettingsStorageStatus() SettingsStorageStatus {
 	a.mu.RLock()
@@ -137,7 +145,7 @@ func (a *App) GetAllSettings() ([]SettingInfo, error) {
 	a.mu.RUnlock()
 
 	if settingsService == nil {
-		return nil, fmt.Errorf("设置服务未启用")
+		return nil, a.errSettingsServiceDisabled()
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -163,7 +171,7 @@ func (a *App) GetSettingsByCategory(category string) ([]SettingInfo, error) {
 	a.mu.RUnlock()
 
 	if settingsService == nil {
-		return nil, fmt.Errorf("设置服务未启用")
+		return nil, a.errSettingsServiceDisabled()
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -189,7 +197,7 @@ func (a *App) GetSetting(category, key string) (SettingInfo, error) {
 	a.mu.RUnlock()
 
 	if settingsService == nil {
-		return SettingInfo{}, fmt.Errorf("设置服务未启用")
+		return SettingInfo{}, a.errSettingsServiceDisabled()
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -214,7 +222,7 @@ func (a *App) UpdateSetting(input UpdateSettingInput) error {
 	a.mu.RUnlock()
 
 	if settingsService == nil {
-		return fmt.Errorf("设置服务未启用")
+		return a.errSettingsServiceDisabled()
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -239,7 +247,7 @@ func (a *App) BatchUpdateSettings(input BatchUpdateSettingsInput) error {
 	a.mu.RUnlock()
 
 	if settingsService == nil {
-		return fmt.Errorf("设置服务未启用")
+		return a.errSettingsServiceDisabled()
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -274,7 +282,7 @@ func (a *App) ResetCategorySettings(category string) error {
 	a.mu.RUnlock()
 
 	if settingsService == nil {
-		return fmt.Errorf("设置服务未启用")
+		return a.errSettingsServiceDisabled()
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -332,7 +340,7 @@ func (a *App) UpdatePreferredPort(port int) error {
 	a.mu.RUnlock()
 
 	if settingsService == nil {
-		return fmt.Errorf("设置服务未启用")
+		return a.errSettingsServiceDisabled()
 	}
 
 	// 验证端口范围

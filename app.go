@@ -670,7 +670,8 @@ func (a *App) syncEndpointMultipliersToTracker(ctx context.Context) {
 	// 转换为 tracking.EndpointMultiplier 格式
 	multipliers := make(map[string]tracking.EndpointMultiplier)
 	for _, ep := range endpoints {
-		multipliers[ep.Name] = tracking.EndpointMultiplier{
+		key := tracking.EndpointMultiplierKey(ep.Channel, ep.Name)
+		multipliers[key] = tracking.EndpointMultiplier{
 			CostMultiplier:                ep.CostMultiplier,
 			InputCostMultiplier:           ep.InputCostMultiplier,
 			OutputCostMultiplier:          ep.OutputCostMultiplier,
@@ -778,16 +779,25 @@ func (a *App) setupStoreDB() {
 	db.SetMaxIdleConns(1)
 	db.SetConnMaxLifetime(0)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	// 这里不做过短超时：如果用户正运行旧版本/另一实例占用数据库，短超时会导致 storeDB 为 nil，
+	// 进而前端出现“设置服务未启用/数据为空”的连锁问题。
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	dbReady := true
 	if err := db.PingContext(ctx); err != nil {
-		_ = db.Close()
-		a.logger.Warn("⚠️ 管理数据库连接不可用", "error", err)
-		return
+		if isLikelySQLiteBusyOrLocked(err) || strings.Contains(strings.ToLower(err.Error()), "context deadline exceeded") {
+			dbReady = false
+			a.logger.Warn("⚠️ 管理数据库连接暂不可用（可能被占用/初始化耗时较长），将继续启动并允许稍后重试", "error", err)
+			a.emitNotification("warning", "数据库暂不可用", "检测到数据库可能被占用或初始化耗时较长；管理功能（设置/渠道/定价）可能暂不可用。请确保只运行一个 CC-Forwarder 实例，稍等后点击刷新，必要时重启。")
+		} else {
+			_ = db.Close()
+			a.logger.Warn("⚠️ 管理数据库连接不可用", "error", err)
+			return
+		}
 	}
 
 	// 当 usageTracker 未启用/初始化失败时，仍需要确保管理表（settings/channels/endpoints/model_pricing 等）存在。
-	if a.usageTracker == nil {
+	if a.usageTracker == nil && dbReady {
 		adapter, err := tracking.NewDatabaseAdapter(tracking.DatabaseConfig{
 			Type:         "sqlite",
 			DatabasePath: dbPath,
@@ -809,6 +819,17 @@ func (a *App) setupStoreDB() {
 
 	a.storeDB = db
 	a.logger.Info("✅ 管理数据库连接已就绪", "db", dbPath)
+}
+
+func isLikelySQLiteBusyOrLocked(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "database is locked") ||
+		strings.Contains(msg, "sqlite_busy") ||
+		strings.Contains(msg, "busy") ||
+		strings.Contains(msg, "locked")
 }
 
 // migrateLegacyDatabaseIfNeeded 将旧版本默认库 usage.db 迁移到新版本默认库 cc-forwarder.db。

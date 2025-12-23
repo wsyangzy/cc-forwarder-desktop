@@ -57,9 +57,12 @@ type EndpointStore interface {
 	Create(ctx context.Context, record *EndpointRecord) (*EndpointRecord, error)
 	Get(ctx context.Context, name string) (*EndpointRecord, error)
 	GetByID(ctx context.Context, id int64) (*EndpointRecord, error)
+	GetByChannelAndName(ctx context.Context, channel, name string) (*EndpointRecord, error)
 	List(ctx context.Context) ([]*EndpointRecord, error)
 	Update(ctx context.Context, record *EndpointRecord) error
 	Delete(ctx context.Context, name string) error
+	UpdateByID(ctx context.Context, record *EndpointRecord) error
+	DeleteByID(ctx context.Context, id int64) error
 
 	// 批量操作
 	BatchCreate(ctx context.Context, records []*EndpointRecord) error
@@ -187,6 +190,24 @@ func (s *SQLiteEndpointStore) Get(ctx context.Context, name string) (*EndpointRe
 	return s.scanEndpoint(s.getQuerier().QueryRowContext(ctx, query, name))
 }
 
+// GetByChannelAndName 根据渠道+名称获取端点（允许不同渠道同名）
+func (s *SQLiteEndpointStore) GetByChannelAndName(ctx context.Context, channel, name string) (*EndpointRecord, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	query := `
+		SELECT id, channel, name, url, token, api_key, headers,
+			priority, failover_enabled, cooldown_seconds, timeout_seconds,
+			supports_count_tokens,
+			cost_multiplier, input_cost_multiplier, output_cost_multiplier,
+			cache_creation_cost_multiplier, cache_creation_cost_multiplier_1h, cache_read_cost_multiplier,
+			enabled, created_at, updated_at
+		FROM endpoints WHERE channel = ? AND name = ?
+	`
+
+	return s.scanEndpoint(s.getQuerier().QueryRowContext(ctx, query, channel, name))
+}
+
 // GetByID 根据 ID 获取端点
 func (s *SQLiteEndpointStore) GetByID(ctx context.Context, id int64) (*EndpointRecord, error) {
 	s.mu.RLock()
@@ -229,6 +250,65 @@ func (s *SQLiteEndpointStore) Update(ctx context.Context, record *EndpointRecord
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if record == nil {
+		return fmt.Errorf("更新端点失败: 记录为空")
+	}
+	if record.ID > 0 {
+		return s.updateByIDLocked(ctx, record)
+	}
+	// 兼容：无 ID 时按 (channel,name) 更新（不支持改名/跨渠道移动）。
+	if record.Channel == "" || record.Name == "" {
+		return fmt.Errorf("更新端点失败: 缺少端点ID且 channel/name 不完整")
+	}
+	return s.updateByChannelAndNameLocked(ctx, record)
+}
+
+// Delete 删除端点
+func (s *SQLiteEndpointStore) Delete(ctx context.Context, name string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// v6.2+: name 允许在不同渠道重复，Delete(name) 仅作为兼容入口。
+	// 若存在重复，将返回错误提示调用方使用 DeleteByID。
+	rows, err := s.getQuerier().QueryContext(ctx, "SELECT id FROM endpoints WHERE name = ? LIMIT 2", name)
+	if err != nil {
+		return fmt.Errorf("查询端点失败: %w", err)
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return fmt.Errorf("扫描端点ID失败: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+
+	if len(ids) == 0 {
+		return fmt.Errorf("端点不存在: %s", name)
+	}
+	if len(ids) > 1 {
+		return fmt.Errorf("端点名称在多个渠道中重复: %s，请使用ID删除", name)
+	}
+	return s.deleteByIDLocked(ctx, ids[0])
+}
+
+// UpdateByID 按 ID 更新端点（推荐）
+func (s *SQLiteEndpointStore) UpdateByID(ctx context.Context, record *EndpointRecord) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.updateByIDLocked(ctx, record)
+}
+
+// DeleteByID 按 ID 删除端点（推荐）
+func (s *SQLiteEndpointStore) DeleteByID(ctx context.Context, id int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.deleteByIDLocked(ctx, id)
+}
+
+func (s *SQLiteEndpointStore) updateByIDLocked(ctx context.Context, record *EndpointRecord) error {
 	// 序列化 headers
 	headersJSON, err := json.Marshal(record.Headers)
 	if err != nil {
@@ -237,23 +317,23 @@ func (s *SQLiteEndpointStore) Update(ctx context.Context, record *EndpointRecord
 
 	query := `
 		UPDATE endpoints SET
-			channel = ?, url = ?, token = ?, api_key = ?, headers = ?,
+			channel = ?, name = ?, url = ?, token = ?, api_key = ?, headers = ?,
 			priority = ?, failover_enabled = ?, cooldown_seconds = ?, timeout_seconds = ?,
 			supports_count_tokens = ?,
 			cost_multiplier = ?, input_cost_multiplier = ?, output_cost_multiplier = ?,
 			cache_creation_cost_multiplier = ?, cache_creation_cost_multiplier_1h = ?, cache_read_cost_multiplier = ?,
 			enabled = ?
-		WHERE name = ?
+		WHERE id = ?
 	`
 
 	result, err := s.getQuerier().ExecContext(ctx, query,
-		record.Channel, record.URL, record.Token, record.ApiKey, string(headersJSON),
+		record.Channel, record.Name, record.URL, record.Token, record.ApiKey, string(headersJSON),
 		record.Priority, boolToInt(record.FailoverEnabled), record.CooldownSeconds, record.TimeoutSeconds,
 		boolToInt(record.SupportsCountTokens),
 		record.CostMultiplier, record.InputCostMultiplier, record.OutputCostMultiplier,
 		record.CacheCreationCostMultiplier, record.CacheCreationCostMultiplier1h, record.CacheReadCostMultiplier,
 		boolToInt(record.Enabled),
-		record.Name,
+		record.ID,
 	)
 	if err != nil {
 		return fmt.Errorf("更新端点失败: %w", err)
@@ -263,22 +343,56 @@ func (s *SQLiteEndpointStore) Update(ctx context.Context, record *EndpointRecord
 	if err != nil {
 		return fmt.Errorf("获取影响行数失败: %w", err)
 	}
-
 	if rowsAffected == 0 {
-		return fmt.Errorf("端点不存在: %s", record.Name)
+		return fmt.Errorf("端点不存在: %d", record.ID)
 	}
-
 	return nil
 }
 
-// Delete 删除端点
-func (s *SQLiteEndpointStore) Delete(ctx context.Context, name string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+func (s *SQLiteEndpointStore) updateByChannelAndNameLocked(ctx context.Context, record *EndpointRecord) error {
+	// 序列化 headers
+	headersJSON, err := json.Marshal(record.Headers)
+	if err != nil {
+		return fmt.Errorf("序列化 headers 失败: %w", err)
+	}
 
-	query := `DELETE FROM endpoints WHERE name = ?`
+	query := `
+		UPDATE endpoints SET
+			url = ?, token = ?, api_key = ?, headers = ?,
+			priority = ?, failover_enabled = ?, cooldown_seconds = ?, timeout_seconds = ?,
+			supports_count_tokens = ?,
+			cost_multiplier = ?, input_cost_multiplier = ?, output_cost_multiplier = ?,
+			cache_creation_cost_multiplier = ?, cache_creation_cost_multiplier_1h = ?, cache_read_cost_multiplier = ?,
+			enabled = ?
+		WHERE channel = ? AND name = ?
+	`
 
-	result, err := s.getQuerier().ExecContext(ctx, query, name)
+	result, err := s.getQuerier().ExecContext(ctx, query,
+		record.URL, record.Token, record.ApiKey, string(headersJSON),
+		record.Priority, boolToInt(record.FailoverEnabled), record.CooldownSeconds, record.TimeoutSeconds,
+		boolToInt(record.SupportsCountTokens),
+		record.CostMultiplier, record.InputCostMultiplier, record.OutputCostMultiplier,
+		record.CacheCreationCostMultiplier, record.CacheCreationCostMultiplier1h, record.CacheReadCostMultiplier,
+		boolToInt(record.Enabled),
+		record.Channel, record.Name,
+	)
+	if err != nil {
+		return fmt.Errorf("更新端点失败: %w", err)
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("获取影响行数失败: %w", err)
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("端点不存在: %s/%s", record.Channel, record.Name)
+	}
+	return nil
+}
+
+func (s *SQLiteEndpointStore) deleteByIDLocked(ctx context.Context, id int64) error {
+	query := `DELETE FROM endpoints WHERE id = ?`
+
+	result, err := s.getQuerier().ExecContext(ctx, query, id)
 	if err != nil {
 		return fmt.Errorf("删除端点失败: %w", err)
 	}
@@ -289,7 +403,7 @@ func (s *SQLiteEndpointStore) Delete(ctx context.Context, name string) error {
 	}
 
 	if rowsAffected == 0 {
-		return fmt.Errorf("端点不存在: %s", name)
+		return fmt.Errorf("端点不存在: %d", id)
 	}
 
 	return nil

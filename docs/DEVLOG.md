@@ -215,6 +215,8 @@
 - migration/列检查与 ALTER：`internal/tracking/sqlite_adapter.go`
 
 关键变更：
+- `endpoints` 唯一性调整：从 `name` 全局唯一 → `UNIQUE(channel, name)`（允许不同渠道端点同名；同一渠道内不允许重名）
+  - 旧库若存在 `UNIQUE(name)` 会在启动迁移时重建 `endpoints` 表以移除旧约束（SQLite 无法直接 drop constraint）
 - `channels` 增加 `priority INTEGER DEFAULT 1`
 - 读取渠道列表时按稳定排序：`priority ASC, created_at DESC, name ASC`（store 层）
 - 说明：本版本以“端点”为统计/追踪维度，不引入“按 Token/API Key 聚合统计”的额外字段与汇总表（该需求已废案）。

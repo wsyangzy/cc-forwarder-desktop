@@ -43,9 +43,11 @@ func (s *EndpointService) CreateEndpoint(ctx context.Context, record *store.Endp
 		return nil, err
 	}
 
-	// 检查名称唯一性（运行时）
-	if existing := s.manager.GetEndpointByNameAny(record.Name); existing != nil {
-		return nil, fmt.Errorf("端点 '%s' 已存在", record.Name)
+	// v6.2+: 允许不同渠道同名端点，但同一渠道内必须唯一
+	if existing, err := s.store.GetByChannelAndName(ctx, record.Channel, record.Name); err != nil {
+		return nil, fmt.Errorf("校验端点名称失败: %w", err)
+	} else if existing != nil {
+		return nil, fmt.Errorf("渠道 '%s' 下端点 '%s' 已存在", record.Channel, record.Name)
 	}
 
 	// 保存到数据库
@@ -58,7 +60,7 @@ func (s *EndpointService) CreateEndpoint(ctx context.Context, record *store.Endp
 	cfg := s.recordToConfig(created)
 	if err := s.manager.AddEndpoint(cfg); err != nil {
 		// 回滚数据库操作
-		_ = s.store.Delete(ctx, record.Name)
+		_ = s.store.DeleteByID(ctx, created.ID)
 		return nil, fmt.Errorf("添加端点到管理器失败: %w", err)
 	}
 
@@ -69,6 +71,15 @@ func (s *EndpointService) CreateEndpoint(ctx context.Context, record *store.Endp
 // GetEndpoint 获取端点详情
 func (s *EndpointService) GetEndpoint(ctx context.Context, name string) (*store.EndpointRecord, error) {
 	record, err := s.store.Get(ctx, name)
+	if err != nil {
+		return nil, fmt.Errorf("获取端点失败: %w", err)
+	}
+	return record, nil
+}
+
+// GetEndpointByID 获取端点详情（按ID）
+func (s *EndpointService) GetEndpointByID(ctx context.Context, id int64) (*store.EndpointRecord, error) {
+	record, err := s.store.GetByID(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("获取端点失败: %w", err)
 	}
@@ -97,13 +108,17 @@ func (s *EndpointService) ListEndpointsByChannel(ctx context.Context, channel st
 // 1. 更新数据库
 // 2. 更新运行时管理器
 func (s *EndpointService) UpdateEndpoint(ctx context.Context, record *store.EndpointRecord) error {
+	if record == nil || record.ID <= 0 {
+		return fmt.Errorf("端点ID不能为空")
+	}
+
 	// 验证端点存在
-	existing, err := s.store.Get(ctx, record.Name)
+	existing, err := s.store.GetByID(ctx, record.ID)
 	if err != nil {
 		return fmt.Errorf("查询端点失败: %w", err)
 	}
 	if existing == nil {
-		return fmt.Errorf("端点 '%s' 不存在", record.Name)
+		return fmt.Errorf("端点不存在: %d", record.ID)
 	}
 
 	// 验证必填字段
@@ -111,14 +126,22 @@ func (s *EndpointService) UpdateEndpoint(ctx context.Context, record *store.Endp
 		return err
 	}
 
-	// 更新数据库
-	if err := s.store.Update(ctx, record); err != nil {
+	// v6.2+: 允许不同渠道同名，需确保“同渠道内唯一”约束
+	if other, err := s.store.GetByChannelAndName(ctx, record.Channel, record.Name); err != nil {
+		return fmt.Errorf("校验端点名称失败: %w", err)
+	} else if other != nil && other.ID != record.ID {
+		return fmt.Errorf("渠道 '%s' 下端点 '%s' 已存在", record.Channel, record.Name)
+	}
+
+	// 更新数据库（按 ID）
+	if err := s.store.UpdateByID(ctx, record); err != nil {
 		return fmt.Errorf("更新数据库失败: %w", err)
 	}
 
 	// 更新运行时管理器
 	cfg := s.recordToConfig(record)
-	if err := s.manager.UpdateEndpointConfig(record.Name, cfg); err != nil {
+	oldKey := endpoint.EndpointKey(existing.Channel, existing.Name)
+	if err := s.manager.UpdateEndpointConfig(oldKey, cfg); err != nil {
 		slog.Warn(fmt.Sprintf("⚠️ [EndpointService] 更新运行时管理器失败: %v", err))
 		// 不回滚数据库，下次重启会同步
 	}
@@ -141,17 +164,43 @@ func (s *EndpointService) DeleteEndpoint(ctx context.Context, name string) error
 	}
 
 	// 先从运行时管理器移除
-	if err := s.manager.RemoveEndpoint(name); err != nil {
+	if err := s.manager.RemoveEndpoint(endpoint.EndpointKey(existing.Channel, existing.Name)); err != nil {
 		slog.Warn(fmt.Sprintf("⚠️ [EndpointService] 从管理器移除端点失败: %v", err))
 		// 继续删除数据库记录
 	}
 
 	// 从数据库删除
-	if err := s.store.Delete(ctx, name); err != nil {
+	if err := s.store.DeleteByID(ctx, existing.ID); err != nil {
 		return fmt.Errorf("从数据库删除失败: %w", err)
 	}
 
 	slog.Info(fmt.Sprintf("✅ [EndpointService] 删除端点成功: %s", name))
+	return nil
+}
+
+// DeleteEndpointByID 删除端点（按ID，避免同名歧义）
+func (s *EndpointService) DeleteEndpointByID(ctx context.Context, id int64) error {
+	if id <= 0 {
+		return fmt.Errorf("端点ID不能为空")
+	}
+	existing, err := s.store.GetByID(ctx, id)
+	if err != nil {
+		return fmt.Errorf("查询端点失败: %w", err)
+	}
+	if existing == nil {
+		return fmt.Errorf("端点不存在: %d", id)
+	}
+
+	// 先从运行时管理器移除
+	if err := s.manager.RemoveEndpoint(endpoint.EndpointKey(existing.Channel, existing.Name)); err != nil {
+		slog.Warn(fmt.Sprintf("⚠️ [EndpointService] 从管理器移除端点失败: %v", err))
+	}
+
+	if err := s.store.DeleteByID(ctx, id); err != nil {
+		return fmt.Errorf("从数据库删除失败: %w", err)
+	}
+
+	slog.Info(fmt.Sprintf("✅ [EndpointService] 删除端点成功: %s", existing.Name))
 	return nil
 }
 
@@ -197,7 +246,7 @@ func (s *EndpointService) ActivateChannel(ctx context.Context, channel string) e
 
 		// 同步运行时配置
 		cfg := s.recordToConfig(record)
-		if err := s.manager.UpdateEndpointConfig(record.Name, cfg); err != nil {
+		if err := s.manager.UpdateEndpointConfig(endpoint.EndpointKey(record.Channel, record.Name), cfg); err != nil {
 			slog.Warn(fmt.Sprintf("⚠️ [EndpointService] 更新运行时管理器失败: %s - %v", record.Name, err))
 		}
 	}
@@ -237,7 +286,7 @@ func (s *EndpointService) DeactivateChannel(ctx context.Context, channel string)
 
 		// 同步运行时配置
 		cfg := s.recordToConfig(record)
-		if err := s.manager.UpdateEndpointConfig(record.Name, cfg); err != nil {
+		if err := s.manager.UpdateEndpointConfig(endpoint.EndpointKey(record.Channel, record.Name), cfg); err != nil {
 			slog.Warn(fmt.Sprintf("⚠️ [EndpointService] 更新运行时管理器失败: %s - %v", record.Name, err))
 		}
 	}
@@ -363,7 +412,7 @@ func (s *EndpointService) SyncFromDatabase(ctx context.Context) error {
 						continue
 					}
 					cfg := s.recordToConfig(record)
-					if err := s.manager.UpdateEndpointConfig(record.Name, cfg); err != nil {
+					if err := s.manager.UpdateEndpointConfig(endpoint.EndpointKey(record.Channel, record.Name), cfg); err != nil {
 						slog.Warn(fmt.Sprintf("⚠️ [EndpointService] 更新运行时管理器失败: %s - %v", record.Name, err))
 					}
 				}
@@ -391,7 +440,7 @@ func (s *EndpointService) GetEndpointWithHealth(ctx context.Context, name string
 	}
 
 	// 获取健康状态
-	status := s.manager.GetEndpointStatus(name)
+	status := s.manager.GetEndpointStatus(endpoint.EndpointKey(record.Channel, record.Name))
 
 	return map[string]interface{}{
 		"id":                  record.ID,
