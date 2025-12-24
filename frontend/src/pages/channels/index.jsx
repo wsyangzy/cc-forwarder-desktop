@@ -992,10 +992,10 @@ const ChannelCard = ({
 };
 
 // ============================================
-// Endpoints 页面
+// Channels 页面
 // ============================================
 
-const EndpointsPage = () => {
+const ChannelsPage = () => {
   // 存储模式状态
   const [storageStatus, setStorageStatus] = useState(null);
   const [storageEndpoints, setStorageEndpoints] = useState([]);
@@ -1199,7 +1199,7 @@ const EndpointsPage = () => {
     const unsubscribe = subscribeToEvent('endpoint:update', () => {
       // 只在 SQLite 模式下刷新数据
       if (isSqliteModeRef.current) {
-        console.log('📡 [Endpoints] 收到端点更新事件，刷新 SQLite 数据');
+        console.log('📡 [Channels] 收到端点更新事件，刷新 SQLite 数据');
         loadStorageStatus();
         loadGroups();
         loadChannelsMeta();
@@ -1815,4 +1815,4 @@ const EndpointsPage = () => {
   );
 };
 
-export default EndpointsPage;
+export default ChannelsPage;

@@ -146,7 +146,7 @@
 
 ### 3.1 渠道管理页面（原 endpoints 页面语义升级）
 
-主页面：`frontend/src/pages/endpoints/index.jsx`
+主页面：`frontend/src/pages/channels/index.jsx`
 
 实现要点：
 - 以“渠道卡片”分块展示：大屏双列布局（两渠道同一行）
@@ -168,11 +168,11 @@
 - `frontend/src/pages/log-viewer/index.jsx`：调整标题结构，确保“系统日志”与“实时查看系统运行日志 · 共 N 条”同一垂直线对齐，并统一图标块样式。
 - `frontend/src/pages/overview/index.jsx`：概览页补齐标题图标与统一布局。
 - `frontend/src/pages/pricing/index.jsx`：基础定价页补齐标题图标与统一布局。
-- `frontend/src/pages/endpoints/index.jsx`：渠道管理页补齐标题图标与统一布局。
+- `frontend/src/pages/channels/index.jsx`：渠道管理页补齐标题图标与统一布局。
 
 ### 3.2 端点详情弹窗（美化 + 实用性）
 
-实现落点：`frontend/src/pages/endpoints/index.jsx`（`EndpointDetailModal`）
+实现落点：`frontend/src/pages/channels/index.jsx`（`EndpointDetailModal`）
 
 关键交互：
 - 点击遮罩（卡片外区域）关闭；点击卡片内部不关闭
@@ -185,7 +185,7 @@
 
 ### 3.3 端点表单（新建/编辑）
 
-实现落点：`frontend/src/pages/endpoints/components/EndpointForm.jsx`
+实现落点：`frontend/src/pages/channels/components/EndpointForm.jsx`
 
 实现要点：
 - 渠道字段：
@@ -289,8 +289,8 @@
   - 前端引入渠道行、删除确认、工具函数等基础组件。
 - 代表文件：
   - `internal/proxy/handlers/streaming.go`
-  - `frontend/src/pages/endpoints/index.jsx`
-  - `frontend/src/pages/endpoints/components/*`
+  - `frontend/src/pages/channels/index.jsx`
+  - `frontend/src/pages/channels/components/*`
 
 ### 7.2 `23fb80a` fix: 双 message_start EOF 重试提示
 - 做了什么：提升 EOF 重试提示触发的稳定性与兼容性。
@@ -318,7 +318,7 @@
   - `internal/proxy/handlers/regular.go`
   - `internal/proxy/handlers/streaming.go`
   - `internal/endpoint/failover.go`
-  - `frontend/src/pages/endpoints/index.jsx`
+  - `frontend/src/pages/channels/index.jsx`
 
 ### 7.5 `c72c38a` fix(database): 迁移逻辑与并发安全
 - 做了什么：修复迁移/并发导致的“创建超时、UI 延迟显示、加载失败”等典型问题根源。
@@ -355,7 +355,7 @@
   - 前端：渠道 select 美化；名称字段可编辑。
 - 代表文件：
   - `app_api_storage.go`
-  - `frontend/src/pages/endpoints/components/EndpointForm.jsx`
+  - `frontend/src/pages/channels/components/EndpointForm.jsx`
 
 ### 7.8 `15206c8` refactor(frontend): 表单/详情体验优化
 - 做了什么：
@@ -364,9 +364,9 @@
   - Token/API Key 复制原始值按钮；
   - 清理无用“复制配置”入口。
 - 代表文件：
-  - `frontend/src/pages/endpoints/index.jsx`
-  - `frontend/src/pages/endpoints/components/EndpointForm.jsx`
-  - `frontend/src/pages/endpoints/components/EndpointRow.jsx`
+  - `frontend/src/pages/channels/index.jsx`
+  - `frontend/src/pages/channels/components/EndpointForm.jsx`
+  - `frontend/src/pages/channels/components/EndpointRow.jsx`
 
 ### 7.9 `853339a` feat(failover): 跨渠道切换也遵循 strategy
 - 做了什么：
