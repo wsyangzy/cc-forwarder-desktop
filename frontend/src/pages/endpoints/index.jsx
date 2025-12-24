@@ -437,18 +437,18 @@ const EndpointDetailModal = ({
               {endpoint.url}
             </p>
 
-            <div className="flex items-center gap-2 mt-2 flex-wrap">
+            <div className="flex items-center gap-1.5 mt-2 flex-nowrap overflow-hidden min-w-0">
               <HealthBadge
                 healthy={endpoint.healthy}
                 neverChecked={endpoint.never_checked || (!endpoint.lastCheck && !endpoint.last_check)}
               />
               <LatencyBadge ms={responseTime} />
-              <span className="text-[10px] text-slate-400 font-mono">
+              <span className="text-[10px] text-slate-400 font-mono whitespace-nowrap min-w-0 truncate max-w-[140px]">
                 最后检查 {lastCheck}
               </span>
 
               <span
-                className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium border ${
+                className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium border whitespace-nowrap min-w-0 truncate max-w-[160px] ${
                   failoverEnabled
                     ? 'bg-indigo-50 text-indigo-700 border-indigo-100'
                     : 'bg-slate-50 text-slate-400 border-slate-200'
@@ -460,7 +460,7 @@ const EndpointDetailModal = ({
               </span>
 
               <span
-                className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium border ${
+                className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium border whitespace-nowrap min-w-0 truncate max-w-[150px] ${
                   supportsCountTokens
                     ? 'bg-purple-50 text-purple-700 border-purple-100'
                     : 'bg-slate-50 text-slate-400 border-slate-200'
@@ -472,7 +472,7 @@ const EndpointDetailModal = ({
               </span>
 
               {multiplier !== 1.0 && (
-                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium border bg-orange-50 text-orange-700 border-orange-100">
+                <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium border bg-orange-50 text-orange-700 border-orange-100 whitespace-nowrap flex-shrink-0">
                   {multiplier}x
                 </span>
               )}
@@ -807,61 +807,35 @@ const ChannelCard = ({
       ${isActive ? 'border-indigo-300 ring-2 ring-indigo-100' : 'border-slate-200/60'}
     `}>
       {/* 渠道头部 */}
-      <div className="px-6 py-4 border-b border-slate-100 flex items-start justify-between gap-4">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2 min-w-0">
-            {channelWebsite && (
-              <button
-                type="button"
-                className="inline-flex items-center justify-center w-6 h-6 rounded-md text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors flex-shrink-0"
-                title={channelWebsite}
-                aria-label="打开渠道官网"
-                onClick={() => openExternalURL(channelWebsite)}
-              >
-                <Globe size={14} />
-              </button>
-            )}
-            <h2 className="font-bold text-slate-900 truncate min-w-0">{channelName}</h2>
-            <span className={`inline-flex items-center justify-center min-w-9 h-6 px-2 rounded-full text-[11px] font-semibold border whitespace-nowrap leading-none flex-shrink-0 ${priorityTone}`}>
-              {priorityLabel}
-            </span>
+      <div className="px-6 py-4 border-b border-slate-100">
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 min-w-0">
+              {channelWebsite && (
+                <button
+                  type="button"
+                  className="inline-flex items-center justify-center w-6 h-6 rounded-md text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors flex-shrink-0"
+                  title={channelWebsite}
+                  aria-label="打开渠道官网"
+                  onClick={() => openExternalURL(channelWebsite)}
+                >
+                  <Globe size={14} />
+                </button>
+              )}
+              <h2 className="font-bold text-slate-900 truncate min-w-0">{channelName}</h2>
+              <span className={`inline-flex items-center justify-center min-w-9 h-6 px-2 rounded-full text-[11px] font-semibold border whitespace-nowrap leading-none flex-shrink-0 ${priorityTone}`}>
+                {priorityLabel}
+              </span>
+            </div>
           </div>
-          <div className="mt-2 flex items-center gap-1.5 flex-nowrap overflow-hidden text-[11px] leading-4 min-w-0">
-            {isActive ? (
-              <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-600 border border-emerald-100 whitespace-nowrap">
-                活跃
-              </span>
-            ) : (
-              <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[11px] font-semibold bg-slate-50 text-slate-500 border border-slate-200 whitespace-nowrap">
-                备用
-              </span>
-            )}
-            {isPaused && (
-              <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-700 border border-amber-200 whitespace-nowrap">
-                已暂停
-              </span>
-            )}
-            {groupInfo?.in_cooldown && (
-              <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-700 border border-amber-200 whitespace-nowrap">
-                冷却中
-              </span>
-            )}
 
-            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-slate-50 text-slate-600 border border-slate-200 whitespace-nowrap">
-              端点 <span className="font-semibold text-slate-800">{totalCount}</span>
-            </span>
-            <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md border ${healthTone} whitespace-nowrap`}>
-              健康 <span className="font-semibold">{hasEndpoints ? `${healthyCount}/${totalCount}` : '-'}</span>
-            </span>
-          </div>
-        </div>
-
-        {/* 渠道操作 */}
-        <div className="flex items-center gap-2 flex-shrink-0">
+          {/* 渠道操作 */}
+          <div className="flex items-center gap-2 flex-shrink-0">
           {!isActive && isSqliteMode && hasEndpoints && (
             <Button
               size="sm"
               icon={Power}
+              className="px-2.5 py-1 rounded-full text-[11px] font-semibold border border-transparent hover:translate-y-0"
               onClick={() => onActivate?.(channelName)}
               disabled={loading}
             >
@@ -871,7 +845,8 @@ const ChannelCard = ({
           {isActive && isSqliteMode && (
             <Button
               size="sm"
-              variant="ghost"
+              variant="dangerSoft"
+              className="px-2.5 py-1 rounded-full text-[11px] font-semibold hover:translate-y-0"
               icon={Power}
               onClick={() => onDeactivate?.(channelName)}
               disabled={loading}
@@ -937,6 +912,36 @@ const ChannelCard = ({
               <Trash2 size={16} />
             </button>
           )}
+          </div>
+        </div>
+
+        <div className="mt-2 flex items-center gap-1.5 text-[11px] leading-4 flex-nowrap whitespace-nowrap min-w-0">
+          {isActive ? (
+            <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-600 border border-emerald-100 whitespace-nowrap">
+              活跃
+            </span>
+          ) : (
+            <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[11px] font-semibold bg-slate-50 text-slate-500 border border-slate-200 whitespace-nowrap">
+              备用
+            </span>
+          )}
+          {isPaused && (
+            <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-700 border border-amber-200 whitespace-nowrap">
+              已暂停
+            </span>
+          )}
+          {groupInfo?.in_cooldown && (
+            <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-700 border border-amber-200 whitespace-nowrap">
+              冷却中
+            </span>
+          )}
+
+          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-slate-50 text-slate-600 border border-slate-200 whitespace-nowrap">
+            端点 <span className="font-semibold text-slate-800">{totalCount}</span>
+          </span>
+          <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md border ${healthTone} whitespace-nowrap`}>
+            健康 <span className="font-semibold">{hasEndpoints ? `${healthyCount}/${totalCount}` : '-'}</span>
+          </span>
         </div>
       </div>
 

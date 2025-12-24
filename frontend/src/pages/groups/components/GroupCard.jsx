@@ -91,17 +91,17 @@ const GroupCard = ({ group, onActivate, onPause, loading, channelFailoverEnabled
       </div>
 
       {/* 底部操作按钮 */}
-      <div className={`px-6 py-4 border-t ${isActive ? 'border-slate-800 bg-slate-800/50' : 'border-gray-50 bg-gray-50/50'}`}>
-        {isActive ? (
-          <button
-            onClick={() => onPause(group.name)}
-            disabled={loading || !channelFailoverEnabled}
-            title={!channelFailoverEnabled ? '已关闭渠道间故障转移：不可暂停渠道' : undefined}
-            className="w-full flex items-center justify-center gap-2 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-white font-medium text-sm transition-all border border-slate-700 disabled:opacity-50"
-          >
-            <Pause className="w-4 h-4" /> 暂停运行
-          </button>
-        ) : (
+        <div className={`px-6 py-4 border-t ${isActive ? 'border-slate-800 bg-slate-800/50' : 'border-gray-50 bg-gray-50/50'}`}>
+          {isActive ? (
+            <button
+              onClick={() => onPause(group.name)}
+              disabled={loading || !channelFailoverEnabled}
+              title={!channelFailoverEnabled ? '已关闭渠道间故障转移：不可暂停渠道' : undefined}
+              className="w-full flex items-center justify-center gap-2 py-2 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-medium text-sm transition-all border border-rose-500/50 disabled:opacity-50"
+            >
+              <Pause className="w-4 h-4" /> 暂停运行
+            </button>
+          ) : (
           <button
             onClick={() => onActivate(group.name)}
             disabled={loading || isCooldown}
