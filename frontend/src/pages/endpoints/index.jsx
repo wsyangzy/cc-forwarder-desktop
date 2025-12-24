@@ -36,7 +36,8 @@ import {
 import useEndpointsData from '@hooks/useEndpointsData.js';
 import {
   EndpointForm,
-  DeleteConfirmDialog
+  DeleteConfirmDialog,
+  PriorityBadge
 } from './components';
 import {
   getEndpointStorageStatus,
@@ -56,6 +57,7 @@ import {
   resumeGroup,
   getConfig,
   isWailsEnvironment,
+  openExternalURL,
   subscribeToEvent
 } from '@utils/wailsApi.js';
 
@@ -179,15 +181,20 @@ const CooldownBadge = ({ inCooldown, cooldownUntil, cooldownReason }) => {
 
 // 延迟指示器
 const LatencyBadge = ({ ms }) => {
-  if (!ms || ms === 0) return <span className="text-slate-300 text-xs">-</span>;
+  const msValue = Number(ms);
+  if (!Number.isFinite(msValue) || msValue <= 0) {
+    return <span className="text-slate-300 text-xs flex-shrink-0">-</span>;
+  }
+
+  const msInt = Math.max(1, Math.round(msValue));
 
   let colorClass = 'text-emerald-600 bg-emerald-50 border-emerald-100';
-  if (ms > 500) colorClass = 'text-amber-600 bg-amber-50 border-amber-100';
-  if (ms > 1000) colorClass = 'text-rose-600 bg-rose-50 border-rose-100';
+  if (msInt > 500) colorClass = 'text-amber-600 bg-amber-50 border-amber-100';
+  if (msInt > 1000) colorClass = 'text-rose-600 bg-rose-50 border-rose-100';
 
   return (
-    <span className={`font-mono text-xs font-medium px-2 py-0.5 rounded border ${colorClass}`}>
-      {ms}ms
+    <span className={`font-mono text-xs font-medium px-2 py-0.5 rounded border whitespace-nowrap flex-shrink-0 ${colorClass}`}>
+      {msInt}ms
     </span>
   );
 };
@@ -259,14 +266,12 @@ const EndpointMiniCard = ({
       <div className="px-4 py-3 border-b border-slate-100">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <h3 className="font-bold text-slate-900 truncate">{endpoint.name}</h3>
-              <div className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-slate-50 border border-slate-200 font-bold text-slate-600 text-[11px]">
-                {endpoint.priority || 1}
-              </div>
+            <div className="flex items-center gap-2 flex-nowrap overflow-hidden min-w-0">
+              <h3 className="font-bold text-slate-900 truncate min-w-0 flex-initial text-sm leading-5">{endpoint.name}</h3>
+              <PriorityBadge priority={endpoint.priority || 1} className="flex-shrink-0" />
               <LatencyBadge ms={responseTime} />
               {!rowActive && (
-                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-50 text-slate-500 border border-slate-200">
+                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-50 text-slate-500 border border-slate-200 whitespace-nowrap flex-shrink-0">
                   未启用
                 </span>
               )}
@@ -775,6 +780,27 @@ const ChannelCard = ({
   const hasMore = endpoints.length > 2;
   const pauseDisabled = loading || !channelFailoverEnabled;
 
+  const priorityValue = Number.isFinite(priority) ? Math.max(1, Math.floor(priority)) : null;
+  const hasValidPriority = priorityValue != null && priorityValue > 0 && priorityValue < 999;
+  const priorityLabel = hasValidPriority ? `P${priorityValue}` : 'P-';
+  const priorityTone = !hasValidPriority
+    ? 'bg-slate-50 text-slate-500 border-slate-200'
+    : priorityValue <= 1
+      ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+      : priorityValue <= 3
+        ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
+        : priorityValue <= 10
+          ? 'bg-slate-50 text-slate-700 border-slate-200'
+          : 'bg-slate-50 text-slate-500 border-slate-200';
+
+  const healthTone = !hasEndpoints
+    ? 'bg-slate-50 text-slate-500 border-slate-200'
+    : healthyCount === totalCount
+      ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+      : healthyCount > 0
+        ? 'bg-amber-50 text-amber-800 border-amber-200'
+        : 'bg-rose-50 text-rose-700 border-rose-200';
+
   return (
     <div className={`
       bg-white rounded-2xl border shadow-sm overflow-hidden h-full flex flex-col
@@ -783,48 +809,51 @@ const ChannelCard = ({
       {/* 渠道头部 */}
       <div className="px-6 py-4 border-b border-slate-100 flex items-start justify-between gap-4">
         <div className="min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <h2 className="font-bold text-slate-900 truncate">{channelName}</h2>
-            {Number.isFinite(priority) && priority > 0 && priority < 999 && (
-              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200">
-                P{priority}
-              </span>
+          <div className="flex items-center gap-2 min-w-0">
+            {channelWebsite && (
+              <button
+                type="button"
+                className="inline-flex items-center justify-center w-6 h-6 rounded-md text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors flex-shrink-0"
+                title={channelWebsite}
+                aria-label="打开渠道官网"
+                onClick={() => openExternalURL(channelWebsite)}
+              >
+                <Globe size={14} />
+              </button>
             )}
-            {isActive && (
-              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-600 border border-emerald-100">
+            <h2 className="font-bold text-slate-900 truncate min-w-0">{channelName}</h2>
+            <span className={`inline-flex items-center justify-center min-w-9 h-6 px-2 rounded-full text-[11px] font-semibold border whitespace-nowrap leading-none flex-shrink-0 ${priorityTone}`}>
+              {priorityLabel}
+            </span>
+          </div>
+          <div className="mt-2 flex items-center gap-1.5 flex-nowrap overflow-hidden text-[11px] leading-4 min-w-0">
+            {isActive ? (
+              <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-600 border border-emerald-100 whitespace-nowrap">
                 活跃
               </span>
-            )}
-            {!isActive && (
-              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-50 text-slate-500 border border-slate-200">
+            ) : (
+              <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[11px] font-semibold bg-slate-50 text-slate-500 border border-slate-200 whitespace-nowrap">
                 备用
               </span>
             )}
             {isPaused && (
-              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-50 text-amber-700 border border-amber-200">
+              <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-700 border border-amber-200 whitespace-nowrap">
                 已暂停
               </span>
             )}
             {groupInfo?.in_cooldown && (
-              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-50 text-amber-700 border border-amber-200">
+              <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-700 border border-amber-200 whitespace-nowrap">
                 冷却中
               </span>
             )}
+
+            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-slate-50 text-slate-600 border border-slate-200 whitespace-nowrap">
+              端点 <span className="font-semibold text-slate-800">{totalCount}</span>
+            </span>
+            <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md border ${healthTone} whitespace-nowrap`}>
+              健康 <span className="font-semibold">{hasEndpoints ? `${healthyCount}/${totalCount}` : '-'}</span>
+            </span>
           </div>
-          <div className="text-xs text-slate-500 mt-1">
-            端点 {totalCount} · 健康 {healthyCount}/{totalCount} · 渠道优先级 {priority ?? '-'}
-          </div>
-          {channelWebsite && (
-            <a
-              href={channelWebsite}
-              target="_blank"
-              rel="noreferrer"
-              className="text-xs text-indigo-600 hover:text-indigo-700 hover:underline mt-1 inline-block truncate max-w-full"
-              title={channelWebsite}
-            >
-              {channelWebsite}
-            </a>
-          )}
         </div>
 
         {/* 渠道操作 */}

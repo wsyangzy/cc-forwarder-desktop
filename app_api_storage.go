@@ -144,9 +144,9 @@ func (a *App) GetEndpointRecords() ([]EndpointRecordInfo, error) {
 
 		// 获取运行时健康状态
 		if endpointManager != nil {
-			status := endpointManager.GetEndpointStatus(r.Name)
+			status := endpointManager.GetEndpointStatus(endpoint.EndpointKey(r.Channel, r.Name))
 			info.Healthy = status.Healthy
-			info.ResponseTimeMs = float64(status.ResponseTime.Milliseconds())
+			info.ResponseTimeMs = float64(status.ResponseTime) / float64(time.Millisecond)
 			// 格式化最后检查时间
 			if !status.LastCheck.IsZero() {
 				info.LastCheck = status.LastCheck.Format("2006-01-02 15:04:05")
@@ -1191,9 +1191,9 @@ func (a *App) GetEndpointsByChannel(channel string) ([]EndpointRecordInfo, error
 
 		// 获取运行时健康状态
 		if endpointManager != nil {
-			status := endpointManager.GetEndpointStatus(r.Name)
+			status := endpointManager.GetEndpointStatus(endpoint.EndpointKey(r.Channel, r.Name))
 			info.Healthy = status.Healthy
-			info.ResponseTimeMs = float64(status.ResponseTime.Milliseconds())
+			info.ResponseTimeMs = float64(status.ResponseTime) / float64(time.Millisecond)
 			// 格式化最后检查时间
 			if !status.LastCheck.IsZero() {
 				info.LastCheck = status.LastCheck.Format("2006-01-02 15:04:05")

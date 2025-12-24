@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -171,14 +172,14 @@ func (m *Manager) GetTokenForEndpoint(ep *Endpoint) string {
 	if len(ep.Config.Tokens) > 0 {
 		activeIndex := m.keyManager.GetActiveTokenIndex(endpointKeyFromConfig(ep.Config))
 		if activeIndex >= 0 && activeIndex < len(ep.Config.Tokens) {
-			return ep.Config.Tokens[activeIndex].Value
+			return sanitizeCredential(ep.Config.Tokens[activeIndex].Value)
 		}
-		return ep.Config.Tokens[0].Value // 回退到第一个
+		return sanitizeCredential(ep.Config.Tokens[0].Value) // 回退到第一个
 	}
 
 	// 2. 使用单 Token 配置
 	if ep.Config.Token != "" {
-		return ep.Config.Token
+		return sanitizeCredential(ep.Config.Token)
 	}
 
 	// 3. 组内继承（仅对单 Token 保持原有行为，多 Token 不继承）
@@ -200,7 +201,7 @@ func (m *Manager) GetTokenForEndpoint(ep *Endpoint) string {
 
 		// If same group and has token (only single token inheritance)
 		if endpointGroup == groupName && endpoint.Config.Token != "" {
-			return endpoint.Config.Token
+			return sanitizeCredential(endpoint.Config.Token)
 		}
 	}
 
@@ -217,14 +218,14 @@ func (m *Manager) GetApiKeyForEndpoint(ep *Endpoint) string {
 	if len(ep.Config.ApiKeys) > 0 {
 		activeIndex := m.keyManager.GetActiveApiKeyIndex(endpointKeyFromConfig(ep.Config))
 		if activeIndex >= 0 && activeIndex < len(ep.Config.ApiKeys) {
-			return ep.Config.ApiKeys[activeIndex].Value
+			return sanitizeCredential(ep.Config.ApiKeys[activeIndex].Value)
 		}
-		return ep.Config.ApiKeys[0].Value // 回退到第一个
+		return sanitizeCredential(ep.Config.ApiKeys[0].Value) // 回退到第一个
 	}
 
 	// 2. 使用单 ApiKey 配置
 	if ep.Config.ApiKey != "" {
-		return ep.Config.ApiKey
+		return sanitizeCredential(ep.Config.ApiKey)
 	}
 
 	// 3. 组内继承（仅对单 ApiKey 保持原有行为，多 ApiKey 不继承）
@@ -246,12 +247,20 @@ func (m *Manager) GetApiKeyForEndpoint(ep *Endpoint) string {
 
 		// If same group and has api-key (only single api-key inheritance)
 		if endpointGroup == groupName && endpoint.Config.ApiKey != "" {
-			return endpoint.Config.ApiKey
+			return sanitizeCredential(endpoint.Config.ApiKey)
 		}
 	}
 
 	// 4. No api-key found in the group
 	return ""
+}
+
+func sanitizeCredential(value string) string {
+	v := strings.TrimSpace(value)
+	v = strings.ReplaceAll(v, "\r", "")
+	v = strings.ReplaceAll(v, "\n", "")
+	v = strings.ReplaceAll(v, "\t", "")
+	return v
 }
 
 // GetConfig returns the manager's configuration

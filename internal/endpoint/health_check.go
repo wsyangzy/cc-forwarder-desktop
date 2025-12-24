@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -167,7 +168,8 @@ func (m *Manager) performHealthChecks() {
 func (m *Manager) checkEndpointHealth(endpoint *Endpoint) {
 	start := time.Now()
 
-	healthURL := endpoint.Config.URL + m.config.Health.HealthPath
+	baseURL := strings.TrimSpace(endpoint.Config.URL)
+	healthURL := baseURL + m.config.Health.HealthPath
 	req, err := http.NewRequestWithContext(m.ctx, "GET", healthURL, nil)
 	if err != nil {
 		m.updateEndpointStatus(endpoint, false, 0)
@@ -176,6 +178,9 @@ func (m *Manager) checkEndpointHealth(endpoint *Endpoint) {
 
 	// Add authorization header with dynamically resolved token
 	token := m.GetTokenForEndpoint(endpoint)
+	if token == "" {
+		token = m.GetApiKeyForEndpoint(endpoint)
+	}
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}

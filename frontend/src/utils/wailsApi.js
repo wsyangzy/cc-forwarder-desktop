@@ -44,6 +44,30 @@ export const initWails = async () => {
   return wailsInitPromise;
 };
 
+// 打开外部链接（Wails 环境下优先走 BrowserOpenURL，避免 WebView 内导航）
+export const openExternalURL = async (url) => {
+  const target = (url || '').trim();
+  if (!target) return;
+
+  if (isWailsEnvironment()) {
+    await initWails();
+    try {
+      WailsRuntime?.BrowserOpenURL?.(target);
+      return;
+    } catch (error) {
+      console.warn('Failed to open URL via Wails runtime:', error);
+    }
+  }
+
+  try {
+    if (typeof window !== 'undefined' && typeof window.open === 'function') {
+      window.open(target, '_blank', 'noopener,noreferrer');
+    }
+  } catch (error) {
+    console.warn('Failed to open URL via window.open:', error);
+  }
+};
+
 // ============================================
 // Wails Events 适配
 // ============================================
