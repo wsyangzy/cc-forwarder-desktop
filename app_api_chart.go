@@ -143,12 +143,62 @@ func (a *App) GetEndpointHealthChart() EndpointHealthData {
 	}
 
 	endpoints := endpointManager.GetAllEndpoints()
+	cfg := endpointManager.GetConfig()
+	gm := endpointManager.GetGroupManager()
 
 	healthyCount := 0
 	unhealthyCount := 0
 	uncheckedCount := 0
 
+	// v6.x: 健康检查范围需要与运行时健康检查一致（避免 UI 统计与实际检查范围不一致）
+	// - 启用“渠道间故障转移”时：检查所有“参与渠道间故障转移”的渠道内、且“参与故障转移”的端点
+	// - 未启用时：仅检查“当前活跃渠道”内、且“参与故障转移”的端点
+	autoSwitchEnabled := cfg != nil && cfg.Failover.Enabled
+	activeGroups := map[string]bool{}
+	if !autoSwitchEnabled && gm != nil {
+		for _, g := range gm.GetActiveGroups() {
+			if g == nil || g.Name == "" {
+				continue
+			}
+			activeGroups[g.Name] = true
+		}
+	}
+
 	for _, endpoint := range endpoints {
+		if endpoint == nil {
+			continue
+		}
+
+		// 组名（渠道 key）：优先用 Channel，缺省回退 Name（与 GetEndpoints 行为保持一致）
+		groupKey := endpoint.Config.Channel
+		if groupKey == "" {
+			groupKey = endpoint.Config.Name
+		}
+
+		// 端点级“参与故障转移”开关：默认参与
+		failoverEnabled := true
+		if endpoint.Config.FailoverEnabled != nil {
+			failoverEnabled = *endpoint.Config.FailoverEnabled
+		}
+
+		inScope := failoverEnabled
+		if autoSwitchEnabled {
+			// 渠道级开关：不参与跨渠道故障转移的渠道不在健康检查范围
+			if gm != nil && !gm.IsChannelFailoverEnabled(groupKey) {
+				inScope = false
+			}
+		} else {
+			// 未启用渠道间故障转移：只对活跃渠道做健康检查
+			if gm != nil && !activeGroups[groupKey] {
+				inScope = false
+			}
+		}
+
+		if !inScope {
+			uncheckedCount++
+			continue
+		}
+
 		status := endpoint.GetStatus()
 		if status.NeverChecked {
 			uncheckedCount++
