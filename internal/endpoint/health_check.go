@@ -89,46 +89,59 @@ func (m *Manager) performHealthChecks() {
 	copy(snapshot, m.endpoints)
 	m.endpointsMu.RUnlock()
 
-	// v5.0: SQLite 存储模式下始终检查所有端点（不管 enabled 状态）
-	// v4.0: YAML 配置模式下根据 auto/manual 模式决定
 	var endpointsToCheck []*Endpoint
 
-	// 判断是否为 SQLite 存储模式
-	isSQLiteMode := m.config.EndpointsStorage.Type == "sqlite"
+	if len(snapshot) == 0 {
+		slog.Debug("🩺 [健康检查] 没有配置的端点，跳过健康检查")
+		return
+	}
 
-	if isSQLiteMode {
-		// v5.0 SQLite 模式：检查所有端点（包括 enabled=false 的）
-		endpointsToCheck = snapshot
-
-		if len(endpointsToCheck) == 0 {
-			slog.Debug("🩺 [健康检查] 没有配置的端点，跳过健康检查")
-			return
+	// 健康检查覆盖范围（与 TODO.md 的资源优化要求对齐）：
+	// - 启用“渠道间故障转移”时：检查所有“参与故障转移”的渠道，且仅检查其中参与故障转移的端点
+	// - 未启用时：只检查当前活跃渠道中参与故障转移的端点
+	if m.config.Failover.Enabled {
+		for _, ep := range snapshot {
+			if ep == nil {
+				continue
+			}
+			// 渠道级开关：暂停渠道不参与跨渠道故障转移，也不做健康检查
+			if m.groupManager != nil && !m.groupManager.IsChannelFailoverEnabled(ChannelKey(ep)) {
+				continue
+			}
+			// 端点级开关：不参与故障转移的端点不做健康检查
+			failoverEnabled := true
+			if ep.Config.FailoverEnabled != nil {
+				failoverEnabled = *ep.Config.FailoverEnabled
+			}
+			if !failoverEnabled {
+				continue
+			}
+			endpointsToCheck = append(endpointsToCheck, ep)
 		}
-
-		slog.Debug(fmt.Sprintf("🩺 [健康检查] SQLite 模式：检查所有 %d 个端点（包括未激活）",
-			len(endpointsToCheck)))
-	} else if m.config.Failover.Enabled {
-		// v6.0 Auto mode: only check active channel endpoints
-		endpointsToCheck = m.groupManager.FilterEndpointsByActiveGroups(snapshot)
-
-		if len(endpointsToCheck) == 0 {
-			slog.Debug("🩺 [健康检查] 自动模式下没有活跃组中的端点，跳过健康检查")
-			return
-		}
-
-		slog.Debug(fmt.Sprintf("🩺 [健康检查] 自动模式：开始检查 %d 个活跃组端点 (总共 %d 个端点)",
+		slog.Debug(fmt.Sprintf("🩺 [健康检查] 渠道间故障转移模式：检查 %d 个参与端点 (总端点 %d)",
 			len(endpointsToCheck), len(snapshot)))
 	} else {
-		// v4.0 Manual mode: check all endpoints to determine their health status
-		endpointsToCheck = snapshot
-
-		if len(endpointsToCheck) == 0 {
-			slog.Debug("🩺 [健康检查] 没有配置的端点，跳过健康检查")
-			return
+		active := m.groupManager.FilterEndpointsByActiveGroups(snapshot)
+		for _, ep := range active {
+			if ep == nil {
+				continue
+			}
+			failoverEnabled := true
+			if ep.Config.FailoverEnabled != nil {
+				failoverEnabled = *ep.Config.FailoverEnabled
+			}
+			if !failoverEnabled {
+				continue
+			}
+			endpointsToCheck = append(endpointsToCheck, ep)
 		}
+		slog.Debug(fmt.Sprintf("🩺 [健康检查] 非故障转移模式：检查活跃渠道 %d 个参与端点 (总端点 %d)",
+			len(endpointsToCheck), len(snapshot)))
+	}
 
-		slog.Debug(fmt.Sprintf("🩺 [健康检查] 手动模式：检查所有 %d 个端点的健康状态",
-			len(endpointsToCheck)))
+	if len(endpointsToCheck) == 0 {
+		slog.Debug("🩺 [健康检查] 没有需要检查的端点，跳过健康检查")
+		return
 	}
 
 	var wg sync.WaitGroup
@@ -150,12 +163,6 @@ func (m *Manager) performHealthChecks() {
 		if ep.IsHealthy() {
 			healthyCount++
 		}
-	}
-
-	if m.config.Failover.Enabled {
-		slog.Debug(fmt.Sprintf("🩺 [健康检查] 完成检查 - 活跃组健康: %d/%d", healthyCount, len(endpointsToCheck)))
-	} else {
-		slog.Debug(fmt.Sprintf("🩺 [健康检查] 完成检查 - 总体健康: %d/%d", healthyCount, len(endpointsToCheck)))
 	}
 
 	// v5.0+ Wails 桌面应用：定时健康检查完成后触发回调推送事件
@@ -189,9 +196,6 @@ func (m *Manager) checkEndpointHealth(endpoint *Endpoint) {
 	responseTime := time.Since(start)
 
 	if err != nil {
-		// Network or connection error
-		slog.Warn(fmt.Sprintf("❌ [健康检查] 端点网络错误: %s - 错误: %s, 响应时间: %dms",
-			endpoint.Config.Name, err.Error(), responseTime.Milliseconds()))
 		m.updateEndpointStatus(endpoint, false, responseTime)
 		return
 	}
@@ -202,19 +206,6 @@ func (m *Manager) checkEndpointHealth(endpoint *Endpoint) {
 	// 2xx: Success responses only
 	// All other status codes (including 4xx, 5xx) are considered unhealthy
 	healthy := (resp.StatusCode >= 200 && resp.StatusCode < 300)
-
-	// Log health check results
-	if healthy {
-		slog.Debug(fmt.Sprintf("✅ [健康检查] 端点正常: %s - 状态码: %d, 响应时间: %dms",
-			endpoint.Config.Name,
-			resp.StatusCode,
-			responseTime.Milliseconds()))
-	} else {
-		slog.Warn(fmt.Sprintf("⚠️ [健康检查] 端点异常: %s - 状态码: %d, 响应时间: %dms",
-			endpoint.Config.Name,
-			resp.StatusCode,
-			responseTime.Milliseconds()))
-	}
 
 	m.updateEndpointStatus(endpoint, healthy, responseTime)
 }
@@ -251,9 +242,6 @@ func (m *Manager) updateEndpointStatus(endpoint *Endpoint, healthy bool, respons
 		// Log the failure
 		if wasHealthy {
 			slog.Warn(fmt.Sprintf("❌ [健康检查] 端点标记为不可用: %s - 连续失败: %d次, 响应时间: %dms",
-				endpoint.Config.Name, endpoint.Status.ConsecutiveFails, responseTime.Milliseconds()))
-		} else {
-			slog.Debug(fmt.Sprintf("❌ [健康检查] 端点仍然不可用: %s - 连续失败: %d次, 响应时间: %dms",
 				endpoint.Config.Name, endpoint.Status.ConsecutiveFails, responseTime.Milliseconds()))
 		}
 	}

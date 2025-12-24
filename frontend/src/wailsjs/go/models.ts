@@ -290,6 +290,7 @@ export namespace main {
 	export class EndpointHealthData {
 	    healthy: number;
 	    unhealthy: number;
+	    unchecked: number;
 	    total: number;
 	
 	    static createFrom(source: any = {}) {
@@ -300,6 +301,7 @@ export namespace main {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.healthy = source["healthy"];
 	        this.unhealthy = source["unhealthy"];
+	        this.unchecked = source["unchecked"];
 	        this.total = source["total"];
 	    }
 	}

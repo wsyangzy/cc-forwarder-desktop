@@ -41,7 +41,7 @@ func (a *App) emitEndpointUpdate() {
 	}
 
 	if a.logger != nil {
-		a.logger.Info("📡 [Wails Event] 推送端点更新", "count", len(endpoints))
+		a.logger.Debug("📡 [Wails Event] 推送端点更新", "count", len(endpoints))
 	}
 
 	runtime.EventsEmit(a.ctx, EventEndpointUpdate, data)

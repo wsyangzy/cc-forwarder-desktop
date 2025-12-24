@@ -972,6 +972,7 @@ func (a *App) CreateChannel(input CreateChannelInput) error {
 	// 同步渠道优先级到运行时（用于渠道间故障转移顺序）
 	if endpointManager != nil {
 		a.syncChannelPrioritiesToEndpointManager(ctx)
+		a.syncChannelFailoverEnabledToEndpointManager(ctx)
 	}
 	return nil
 }
@@ -1015,6 +1016,7 @@ func (a *App) UpdateChannel(input UpdateChannelInput) error {
 
 	if endpointManager != nil {
 		a.syncChannelPrioritiesToEndpointManager(ctx)
+		a.syncChannelFailoverEnabledToEndpointManager(ctx)
 	}
 
 	// 推送前端刷新（channelsMeta & groups）
@@ -1065,6 +1067,43 @@ func (a *App) syncChannelPrioritiesToEndpointManager(ctx context.Context) {
 		priorities[r.Name] = p
 	}
 	endpointManager.UpdateChannelPriorities(priorities)
+}
+
+func (a *App) syncChannelFailoverEnabledToEndpointManager(ctx context.Context) {
+	a.mu.RLock()
+	channelStore := a.channelStore
+	endpointManager := a.endpointManager
+	logger := a.logger
+	a.mu.RUnlock()
+
+	if channelStore == nil || endpointManager == nil {
+		return
+	}
+
+	baseCtx := ctx
+	if baseCtx == nil || baseCtx.Err() != nil {
+		baseCtx = context.Background()
+	}
+
+	syncCtx, cancel := context.WithTimeout(baseCtx, 3*time.Second)
+	defer cancel()
+
+	records, err := channelStore.List(syncCtx)
+	if err != nil {
+		if logger != nil {
+			logger.Warn("⚠️ 同步渠道故障转移开关失败", "error", err)
+		}
+		return
+	}
+
+	enabled := make(map[string]bool, len(records))
+	for _, r := range records {
+		if r == nil || r.Name == "" {
+			continue
+		}
+		enabled[r.Name] = r.FailoverEnabled
+	}
+	endpointManager.UpdateChannelFailoverEnabled(enabled)
 }
 
 // DeleteChannel 删除渠道

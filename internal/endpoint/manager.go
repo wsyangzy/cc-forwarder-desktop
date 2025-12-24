@@ -43,14 +43,14 @@ type Endpoint struct {
 
 // Manager manages endpoints and their health status
 type Manager struct {
-	endpoints   []*Endpoint
-	endpointsMu sync.RWMutex // v5.0+: 保护 endpoints 切片的并发访问
-	config      *config.Config
-	client      *http.Client
-	ctx         context.Context
-	cancel      context.CancelFunc
-	wg          sync.WaitGroup
-	fastTester  *FastTester
+	endpoints    []*Endpoint
+	endpointsMu  sync.RWMutex // v5.0+: 保护 endpoints 切片的并发访问
+	config       *config.Config
+	client       *http.Client
+	ctx          context.Context
+	cancel       context.CancelFunc
+	wg           sync.WaitGroup
+	fastTester   *FastTester
 	groupManager *GroupManager
 	keyManager   *KeyManager // 管理多 API Key 状态
 	// EventBus for decoupled event publishing
@@ -68,6 +68,14 @@ func (m *Manager) UpdateChannelPriorities(priorities map[string]int) {
 		return
 	}
 	m.groupManager.UpdateChannelPriorities(priorities)
+}
+
+// UpdateChannelFailoverEnabled 同步“渠道是否参与渠道间故障转移”的开关到运行时组管理器。
+func (m *Manager) UpdateChannelFailoverEnabled(enabled map[string]bool) {
+	if m == nil || m.groupManager == nil {
+		return
+	}
+	m.groupManager.UpdateChannelFailoverEnabled(enabled)
 }
 
 // NewManager creates a new endpoint manager

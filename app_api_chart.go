@@ -128,6 +128,7 @@ func (a *App) GetConnectionActivityChart(minutes int) []ChartDataPoint {
 type EndpointHealthData struct {
 	Healthy   int `json:"healthy"`
 	Unhealthy int `json:"unhealthy"`
+	Unchecked int `json:"unchecked"`
 	Total     int `json:"total"`
 }
 
@@ -145,9 +146,15 @@ func (a *App) GetEndpointHealthChart() EndpointHealthData {
 
 	healthyCount := 0
 	unhealthyCount := 0
+	uncheckedCount := 0
 
 	for _, endpoint := range endpoints {
-		if endpoint.IsHealthy() {
+		status := endpoint.GetStatus()
+		if status.NeverChecked {
+			uncheckedCount++
+			continue
+		}
+		if status.Healthy {
 			healthyCount++
 		} else {
 			unhealthyCount++
@@ -157,6 +164,7 @@ func (a *App) GetEndpointHealthChart() EndpointHealthData {
 	return EndpointHealthData{
 		Healthy:   healthyCount,
 		Unhealthy: unhealthyCount,
+		Unchecked: uncheckedCount,
 		Total:     len(endpoints),
 	}
 }

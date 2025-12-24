@@ -426,6 +426,8 @@ func (a *App) setupEndpointStore() {
 
 		// v6.1+: 同步渠道优先级到运行时，用于渠道间故障转移顺序
 		a.syncChannelPrioritiesToEndpointManager(ctx)
+		// v6.2+: 同步渠道“参与故障转移”开关（暂停/恢复持久化）
+		a.syncChannelFailoverEnabledToEndpointManager(ctx)
 		a.logger.Info("✅ 端点存储已启用 (SQLite)")
 	}
 }

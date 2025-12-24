@@ -5,7 +5,7 @@
 本文件用于记录本轮“端点 → 渠道（channel）”重构及相关优化的**详细实现**，便于后续继续迭代、排查回归与快速定位代码。
 
 起始基线：`25e801c8ddf9b2be5c683dd4221e888477dbb8f3`（tag: `v5.1.0`）  
-当前 HEAD：`c84a4a7`（建议发布为 `v6.0.1`）  
+当前 HEAD：`333efc8`（本地工作区存在未提交变更）  
 合并节点：`919e510 Merge branch 'feat/channel-priority'`
 
 ---
@@ -400,6 +400,47 @@
   - `internal/store/sqlite_busy_retry.go`
   - `internal/store/settings.go`
   - `internal/store/model_pricing.go`
+
+### 7.12（working tree）fix(failover/health): 渠道级暂停持久化（无限期）+ 健康检查范围收敛
+- 做了什么：
+  - “暂停/恢复”改为渠道级开关，持久化到 SQLite：暂停后无限期生效，直到手动恢复；重启应用不会丢失状态。
+  - 健康检查覆盖范围收敛（减少资源消耗与日志量）：
+    - 启用渠道间故障转移：仅检查“参与渠道间故障转移”的渠道内、且“参与故障转移”的端点。
+    - 未启用：仅检查“当前活跃渠道”内、且“参与故障转移”的端点。
+- 怎么做：
+  - SQLite：新增 `channels.failover_enabled` 并在启动时自动迁移；服务层更新 CRUD，避免普通更新覆盖该字段。
+  - 运行时：启动时把 `channels.failover_enabled` 同步到 `GroupManager`，并在健康检查阶段基于该开关过滤端点。
+- 代表文件：
+  - `internal/tracking/schema.sql`
+  - `internal/tracking/sqlite_adapter.go`
+  - `internal/store/channel.go`
+  - `internal/service/channel.go`
+  - `app_api_storage.go`
+  - `app.go`
+  - `internal/endpoint/health_check.go`
+
+### 7.13（working tree）fix(channels-ui): 停用渠道自动切换 + 弹窗交互优化
+- 做了什么：
+  - 启用渠道间故障转移时，停用当前活跃渠道会按路由策略自动切换到下一个可用渠道；仅当“只剩一个渠道”或“未启用渠道间故障转移”时提示“停用后无激活渠道”。
+  - 将原本浏览器 `window.confirm/alert` 改为应用内弹窗，交互更符合桌面应用。
+  - 双列布局下，同一行两个渠道卡片的“展开/收起”联动，避免两侧状态不一致。
+- 代表文件：
+  - `internal/endpoint/failover.go`
+  - `internal/service/endpoint.go`
+  - `frontend/src/pages/channels/index.jsx`
+
+### 7.14（working tree）fix(ui/overview): 端点健康三态（健康/异常/未检测）+ 渠道健康标签文案
+- 做了什么：
+  - 概览端点健康统计改为三态：健康、异常、未检测（灰色）。
+  - 渠道页端点/渠道的“未参与检测”提示不再单独展示，避免信息噪声；对不在检查范围的端点统一归入“未检测”。
+  - 渠道卡片的 `健康 n/n` 在“当前渠道不在检查范围”时改为 `检测 <占位文案>`，避免出现“健康 未检测”的误导（占位文案可按产品口径调整）。
+- 代表文件：
+  - `app_api_chart.go`
+  - `frontend/src/pages/overview/components/EndpointHealthChart.jsx`
+  - `frontend/src/pages/overview/components/KPICardsGrid.jsx`
+  - `frontend/src/pages/channels/index.jsx`
+  - `frontend/src/utils/api.js`
+  - `frontend/src/utils/wailsApi.js`
 
 ---
 

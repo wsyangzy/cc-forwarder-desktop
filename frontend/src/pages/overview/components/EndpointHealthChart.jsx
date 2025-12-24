@@ -4,7 +4,7 @@
 // ============================================
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { RefreshCw, Activity, CheckCircle2, XCircle } from 'lucide-react';
+import { RefreshCw, Activity, CheckCircle2, XCircle, Clock } from 'lucide-react';
 import {
   PieChart,
   Pie,
@@ -16,11 +16,12 @@ import { fetchEndpointHealthData } from '@utils/api.js';
 // 健康状态配置
 const HEALTH_CONFIG = {
   healthy: { name: '健康', color: '#10b981', icon: CheckCircle2 },
-  unhealthy: { name: '异常', color: '#ef4444', icon: XCircle }
+  unhealthy: { name: '异常', color: '#ef4444', icon: XCircle },
+  unchecked: { name: '未检测', color: '#94a3b8', icon: Clock }
 };
 
 const EndpointHealthChart = () => {
-  const [healthData, setHealthData] = useState({ healthy: 0, unhealthy: 0 });
+  const [healthData, setHealthData] = useState({ healthy: 0, unhealthy: 0, unchecked: 0 });
   const [loading, setLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const refreshIntervalRef = useRef(null);
@@ -34,7 +35,8 @@ const EndpointHealthChart = () => {
       const data = await fetchEndpointHealthData();
       setHealthData({
         healthy: data.healthy || 0,
-        unhealthy: data.unhealthy || 0
+        unhealthy: data.unhealthy || 0,
+        unchecked: data.unchecked || 0
       });
     } catch (error) {
       console.error('加载端点健康数据失败:', error);
@@ -66,22 +68,23 @@ const EndpointHealthChart = () => {
   useEffect(() => {
     const handleChartUpdate = (event) => {
       const { chart_type, data } = event.detail || {};
-      if (chart_type === 'endpoint_health' || chart_type === 'endpointHealth') {
-        if (data) {
-          // 处理不同格式的数据
-          if (data.healthy !== undefined) {
-            setHealthData({
-              healthy: data.healthy || 0,
-              unhealthy: data.unhealthy || 0
-            });
-          } else if (data.labels && data.datasets) {
-            // Chart.js 格式
-            const [healthy, unhealthy] = data.datasets[0]?.data || [0, 0];
-            setHealthData({ healthy, unhealthy });
+        if (chart_type === 'endpoint_health' || chart_type === 'endpointHealth') {
+          if (data) {
+            // 处理不同格式的数据
+            if (data.healthy !== undefined) {
+              setHealthData({
+                healthy: data.healthy || 0,
+                unhealthy: data.unhealthy || 0,
+                unchecked: data.unchecked || 0
+              });
+            } else if (data.labels && data.datasets) {
+              // Chart.js 格式
+              const [healthy, unhealthy] = data.datasets[0]?.data || [0, 0];
+              setHealthData({ healthy, unhealthy, unchecked: 0 });
+            }
+            console.log('📊 [SSE] 端点健康图已更新');
           }
-          console.log('📊 [SSE] 端点健康图已更新');
         }
-      }
     };
 
     document.addEventListener('chartUpdate', handleChartUpdate);
@@ -96,18 +99,21 @@ const EndpointHealthChart = () => {
   };
 
   // 计算统计数据
-  const total = healthData.healthy + healthData.unhealthy;
-  const healthPercent = total > 0 ? Math.round((healthData.healthy / total) * 100) : 100;
+  const checkedTotal = healthData.healthy + healthData.unhealthy;
+  const total = healthData.healthy + healthData.unhealthy + healthData.unchecked;
+  const healthPercent = checkedTotal > 0 ? Math.round((healthData.healthy / checkedTotal) * 100) : 0;
 
   // 图表数据（半圆仪表盘）
   const chartData = [
     { name: '健康', value: healthData.healthy, color: HEALTH_CONFIG.healthy.color },
-    { name: '异常', value: healthData.unhealthy, color: HEALTH_CONFIG.unhealthy.color }
+    { name: '异常', value: healthData.unhealthy, color: HEALTH_CONFIG.unhealthy.color },
+    { name: '未检测', value: healthData.unchecked, color: HEALTH_CONFIG.unchecked.color }
   ];
 
   // 确定健康状态的显示样式
   const getHealthStatus = () => {
     if (total === 0) return { text: '无数据', color: 'text-slate-400', bg: 'bg-slate-50' };
+    if (checkedTotal === 0) return { text: '未检测', color: 'text-slate-600', bg: 'bg-slate-50' };
     if (healthPercent >= 90) return { text: '优秀', color: 'text-emerald-600', bg: 'bg-emerald-50' };
     if (healthPercent >= 70) return { text: '良好', color: 'text-amber-600', bg: 'bg-amber-50' };
     return { text: '警告', color: 'text-rose-600', bg: 'bg-rose-50' };
@@ -126,7 +132,7 @@ const EndpointHealthChart = () => {
         </div>
         <div className="flex items-center space-x-2">
           <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${status.bg} ${status.color}`}>
-            {healthPercent}% {status.text}
+            {checkedTotal > 0 ? `${healthPercent}%` : '-'} {status.text}
           </span>
           <button
             onClick={handleRefresh}
@@ -172,14 +178,21 @@ const EndpointHealthChart = () => {
               </PieChart>
             </ResponsiveContainer>
             <div className="absolute inset-0 top-8 flex flex-col items-center justify-center pointer-events-none">
-              <CheckCircle2
-                size={28}
-                className={healthPercent >= 70 ? 'text-emerald-500' : 'text-rose-500'}
-              />
+              {checkedTotal === 0 ? (
+                <Clock size={28} className="text-slate-400" />
+              ) : (
+                <CheckCircle2
+                  size={28}
+                  className={healthPercent >= 70 ? 'text-emerald-500' : 'text-rose-500'}
+                />
+              )}
               <span className="text-2xl font-bold text-slate-900 mt-1">
-                {healthData.healthy}/{total}
+                {healthData.healthy}/{checkedTotal}
               </span>
-              <span className="text-xs text-slate-400">端点在线</span>
+              <span className="text-xs text-slate-400">已检测端点在线</span>
+              {healthData.unchecked > 0 && (
+                <span className="text-[11px] text-slate-400 mt-1">未检测 {healthData.unchecked}</span>
+              )}
             </div>
           </>
         )}
@@ -187,7 +200,7 @@ const EndpointHealthChart = () => {
 
       {/* 图例和详情 */}
       {!loading && (
-        <div className="grid grid-cols-2 gap-4 mt-2 pt-3 border-t border-slate-100">
+        <div className="grid grid-cols-3 gap-4 mt-2 pt-3 border-t border-slate-100">
           <div className="flex items-center justify-between">
             <div className="flex items-center text-xs text-slate-600">
               <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 mr-2" />
@@ -204,6 +217,15 @@ const EndpointHealthChart = () => {
             </div>
             <span className="font-mono text-sm font-semibold text-rose-600">
               {healthData.unhealthy}
+            </span>
+          </div>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center text-xs text-slate-600">
+              <span className="w-2.5 h-2.5 rounded-full bg-slate-400 mr-2" />
+              未检测
+            </div>
+            <span className="font-mono text-sm font-semibold text-slate-500">
+              {healthData.unchecked}
             </span>
           </div>
         </div>

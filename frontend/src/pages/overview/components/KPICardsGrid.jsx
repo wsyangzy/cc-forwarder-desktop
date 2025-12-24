@@ -38,13 +38,34 @@ const KPICardsGrid = ({ data }) => {
 
   // 构建显示文本
   let activeEndpointText = '无活动端点';
+  let activeEndpointStatusColor = 'bg-slate-50 text-slate-600';
+  let activeEndpointTooltip = activeGroup ? activeGroup.name : '无活动端点';
   if (activeGroup) {
-    // v4.0: 组名 = 端点名，显示健康状态
-    const healthStatus = activeGroup.healthy_endpoints > 0 ? '✓ 健康' : '✗ 异常';
-    activeEndpointText = `${activeGroup.name} (${healthStatus})`;
+    // v6.0+: 端点健康三态：健康/异常/未检测（未检测=灰色）
+    const activeGroupName = activeGroup.name;
+    const list = endpoints.endpoints || [];
+    const inGroup = list.filter((e) => (e.group || e.channel || e.name) === activeGroupName);
+    const checked = inGroup.filter((e) => {
+      const neverChecked = e.never_checked || e.neverChecked;
+      const hasLastCheck = !!(e.last_check || e.lastCheck);
+      return !neverChecked && hasLastCheck;
+    });
+    const healthyCount = checked.filter((e) => e.status === 'healthy' || e.healthy).length;
+
+    const healthStatus = checked.length === 0
+      ? '未检测'
+      : (healthyCount > 0 ? '✓ 健康' : '✗ 异常');
+
+    activeEndpointText = `${activeGroupName} (${healthStatus})`;
+    activeEndpointTooltip = activeEndpointText;
+    activeEndpointStatusColor = checked.length === 0
+      ? 'bg-slate-50 text-slate-600'
+      : (healthyCount > 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600');
   } else if (endpoints.healthy > 0) {
     // 回退：如果没有活跃组信息，但有健康端点
     activeEndpointText = `${endpoints.healthy} 个可用`;
+    activeEndpointTooltip = activeEndpointText;
+    activeEndpointStatusColor = 'bg-emerald-50 text-emerald-600';
   }
 
   // v5.1+: 成本和 tokens 数据
@@ -100,9 +121,9 @@ const KPICardsGrid = ({ data }) => {
       <KPICard
         title="活动端点"
         value={activeEndpointText}
-        tooltip={activeGroup ? `${activeGroup.name} (${activeGroup.healthy_endpoints > 0 ? '健康' : '异常'})` : '无活动端点'}
+        tooltip={activeEndpointTooltip}
         icon={Activity}
-        statusColor={activeGroup ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-50 text-slate-600'}
+        statusColor={activeEndpointStatusColor}
       />
     </div>
   );

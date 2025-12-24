@@ -119,11 +119,51 @@ const DeleteChannelConfirmDialog = ({ channelName, endpointCount = 0, onConfirm,
   );
 };
 
+const DeactivateChannelConfirmDialog = ({ channelName, onConfirm, onCancel, loading }) => {
+  const confirmDisabled = loading;
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-start justify-center z-50 animate-fade-in pt-[20vh]">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="p-3 bg-amber-100 rounded-full">
+            <AlertTriangle className="text-amber-700" size={24} />
+          </div>
+          <div>
+            <h3 className="text-lg font-semibold text-slate-900">确认停用渠道</h3>
+            <p className="text-sm text-slate-500">停用后将没有激活渠道，请谨慎操作</p>
+          </div>
+        </div>
+
+        <p className="text-slate-700 mb-4">
+          确定要停用渠道 <span className="font-semibold">“{channelName}”</span> 吗？
+          停用后将没有激活渠道，所有请求会失败直到再次激活。
+        </p>
+
+        <div className="flex justify-end gap-3">
+          <Button variant="ghost" onClick={onCancel} disabled={loading}>
+            取消
+          </Button>
+          <Button
+            variant="danger"
+            icon={Power}
+            onClick={() => onConfirm?.()}
+            loading={loading}
+            disabled={confirmDisabled}
+          >
+            确认停用
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // ============================================
 // 端点表格行组件 (v5.0 增强版 - 参考 test.jsx 设计)
 // ============================================
 
-// 健康状态徽章
+// 健康状态徽章（健康/异常/未检测）
 const HealthBadge = ({ healthy, neverChecked }) => {
   if (neverChecked) {
     return (
@@ -180,10 +220,18 @@ const CooldownBadge = ({ inCooldown, cooldownUntil, cooldownReason }) => {
 };
 
 // 延迟指示器
-const LatencyBadge = ({ ms }) => {
+const LatencyBadge = ({ ms, inScope = true }) => {
+  if (!inScope) {
+    return null;
+  }
+
   const msValue = Number(ms);
   if (!Number.isFinite(msValue) || msValue <= 0) {
-    return <span className="text-slate-300 text-xs flex-shrink-0">-</span>;
+    return (
+      <span className="font-mono text-xs font-medium px-2 py-0.5 rounded border whitespace-nowrap flex-shrink-0 bg-slate-50 text-slate-300 border-slate-200">
+        -
+      </span>
+    );
   }
 
   const msInt = Math.max(1, Math.round(msValue));
@@ -237,8 +285,9 @@ const EndpointMiniCard = ({
   if (!endpoint) return null;
 
   const rowActive = isSqliteMode ? !!endpoint.enabled : !!isActiveChannel;
+  const inScope = endpoint._health_scope !== false;
   const responseTime = endpoint.response_time || endpoint.responseTimeMs || 0;
-  const isNeverChecked = endpoint.never_checked || (!endpoint.lastCheck && !endpoint.last_check && !endpoint.updatedAt);
+  const isNeverChecked = endpoint.never_checked || endpoint.neverChecked || (!endpoint.lastCheck && !endpoint.last_check);
   const lastCheck = formatLastCheck(endpoint.lastCheck || endpoint.last_check || endpoint.updatedAt);
 
   const authType = getAuthType(endpoint);
@@ -269,7 +318,7 @@ const EndpointMiniCard = ({
             <div className="flex items-center gap-2 flex-nowrap overflow-hidden min-w-0">
               <h3 className="font-bold text-slate-900 truncate min-w-0 flex-initial text-sm leading-5">{endpoint.name}</h3>
               <PriorityBadge priority={endpoint.priority || 1} className="flex-shrink-0" />
-              <LatencyBadge ms={responseTime} />
+              <LatencyBadge ms={responseTime} inScope={inScope} />
               {!rowActive && (
                 <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-50 text-slate-500 border border-slate-200 whitespace-nowrap flex-shrink-0">
                   未启用
@@ -328,7 +377,7 @@ const EndpointMiniCard = ({
         </div>
 
         <div className="flex items-center gap-2 mt-2 flex-wrap">
-          <HealthBadge healthy={endpoint.healthy} neverChecked={isNeverChecked} />
+          <HealthBadge healthy={endpoint.healthy} neverChecked={!inScope || isNeverChecked} />
           <CooldownBadge
             inCooldown={endpoint.in_cooldown || endpoint.inCooldown}
             cooldownUntil={endpoint.cooldown_until || endpoint.cooldownUntil}
@@ -384,6 +433,8 @@ const EndpointDetailModal = ({
   const channel = endpoint.channel || endpoint.group || '-';
   const responseTime = endpoint.response_time || endpoint.responseTimeMs || 0;
   const lastCheck = formatLastCheck(endpoint.lastCheck || endpoint.last_check || endpoint.updatedAt);
+  const inScope = endpoint._health_scope !== false;
+  const neverChecked = endpoint.never_checked || endpoint.neverChecked || (!endpoint.lastCheck && !endpoint.last_check);
 
   const failoverEnabled = endpoint.failoverEnabled !== false;
   const supportsCountTokens = !!endpoint.supportsCountTokens;
@@ -438,11 +489,8 @@ const EndpointDetailModal = ({
             </p>
 
             <div className="flex items-center gap-1.5 mt-2 flex-nowrap overflow-hidden min-w-0">
-              <HealthBadge
-                healthy={endpoint.healthy}
-                neverChecked={endpoint.never_checked || (!endpoint.lastCheck && !endpoint.last_check)}
-              />
-              <LatencyBadge ms={responseTime} />
+              <HealthBadge healthy={endpoint.healthy} neverChecked={!inScope || neverChecked} />
+              <LatencyBadge ms={responseTime} inScope={inScope} />
               <span className="text-[10px] text-slate-400 font-mono whitespace-nowrap min-w-0 truncate max-w-[140px]">
                 最后检查 {lastCheck}
               </span>
@@ -746,6 +794,8 @@ const ChannelCard = ({
   activeChannelName = '',
   isSqliteMode = false,
   channelFailoverEnabled = true,
+  expanded = false,
+  onToggleExpanded,
   onActivate,
   onDeactivate,
   onPause,
@@ -759,9 +809,10 @@ const ChannelCard = ({
   onDeleteEndpoint,
   loading = false
 }) => {
-  const [expanded, setExpanded] = useState(false);
+  const scopedEndpoints = endpoints.filter(e => e._health_scope !== false);
+  const scopedHealthyCount = scopedEndpoints.filter(e => e.healthy).length;
+  const scopedTotalCount = scopedEndpoints.length;
 
-  const healthyCount = endpoints.filter(e => e.healthy).length;
   const totalCount = endpoints.length;
   const hasEndpoints = totalCount > 0;
   const hasGroupInfo = !!groupInfo;
@@ -793,11 +844,11 @@ const ChannelCard = ({
           ? 'bg-slate-50 text-slate-700 border-slate-200'
           : 'bg-slate-50 text-slate-500 border-slate-200';
 
-  const healthTone = !hasEndpoints
+  const healthTone = !hasEndpoints || scopedTotalCount === 0
     ? 'bg-slate-50 text-slate-500 border-slate-200'
-    : healthyCount === totalCount
+    : scopedHealthyCount === scopedTotalCount
       ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-      : healthyCount > 0
+      : scopedHealthyCount > 0
         ? 'bg-amber-50 text-amber-800 border-amber-200'
         : 'bg-rose-50 text-rose-700 border-rose-200';
 
@@ -939,8 +990,14 @@ const ChannelCard = ({
           <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-slate-50 text-slate-600 border border-slate-200 whitespace-nowrap">
             端点 <span className="font-semibold text-slate-800">{totalCount}</span>
           </span>
-          <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md border ${healthTone} whitespace-nowrap`}>
-            健康 <span className="font-semibold">{hasEndpoints ? `${healthyCount}/${totalCount}` : '-'}</span>
+          <span
+            className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md border ${healthTone} whitespace-nowrap`}
+            title={hasEndpoints && scopedTotalCount === 0 ? '当前渠道不在健康检查范围（未参与故障转移/非活跃渠道）' : undefined}
+          >
+            {hasEndpoints && scopedTotalCount === 0 ? '检测' : '健康'}{' '}
+            <span className="font-semibold">
+              {hasEndpoints ? (scopedTotalCount > 0 ? `${scopedHealthyCount}/${scopedTotalCount}` : '关闭') : '-'}
+            </span>
           </span>
         </div>
       </div>
@@ -970,7 +1027,7 @@ const ChannelCard = ({
       {hasMore && (
         <div className="px-4 py-3 border-t border-slate-100 bg-slate-50/40">
           <button
-            onClick={() => setExpanded((v) => !v)}
+            onClick={() => onToggleExpanded?.()}
             className="w-full flex items-center justify-center gap-2 text-sm text-slate-600 hover:text-indigo-600 transition-colors"
           >
             {expanded ? (
@@ -1044,6 +1101,9 @@ const ChannelsPage = () => {
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [deleteChannelTarget, setDeleteChannelTarget] = useState(null);
   const [deleteChannelLoading, setDeleteChannelLoading] = useState(false);
+  const [deactivateChannelTarget, setDeactivateChannelTarget] = useState(null);
+  const [deactivateChannelLoading, setDeactivateChannelLoading] = useState(false);
+  const [actionError, setActionError] = useState('');
 
   // 端点详情弹窗
   const [detailTarget, setDetailTarget] = useState(null);
@@ -1156,7 +1216,7 @@ const ChannelsPage = () => {
       await loadGroups();
     } catch (err) {
       console.error('切换故障转移参与状态失败:', err);
-      alert(`操作失败: ${getErrorMessage(err, '未知错误')}`);
+      setActionError(`操作失败: ${getErrorMessage(err, '未知错误')}`);
     } finally {
       setChannelActionLoading(false);
     }
@@ -1227,7 +1287,7 @@ const ChannelsPage = () => {
       }
     } catch (err) {
       console.error('批量健康检测失败:', err);
-      alert(`批量健康检测失败: ${getErrorMessage(err, '未知错误')}`);
+      setActionError(`批量健康检测失败: ${getErrorMessage(err, '未知错误')}`);
     } finally {
       setBatchCheckLoading(false);
     }
@@ -1235,6 +1295,20 @@ const ChannelsPage = () => {
 
   // 获取要显示的端点列表
   const displayEndpoints = isSqliteMode ? storageEndpoints : endpoints;
+
+  // 视口是否为 2 列布局（lg 及以上），用于“同一行两个渠道卡片”展开/收起联动
+  const [isTwoColumnLayout, setIsTwoColumnLayout] = useState(false);
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
+    const mql = window.matchMedia('(min-width: 1024px)');
+    const update = () => setIsTwoColumnLayout(!!mql.matches);
+    update();
+    mql.addEventListener?.('change', update);
+    return () => mql.removeEventListener?.('change', update);
+  }, []);
+
+  const [expandedRows, setExpandedRows] = useState(() => new Set());
+  const [expandedChannels, setExpandedChannels] = useState(() => new Set());
 
   // v6.0: SQLite 模式下“enabled”语义为“激活渠道”，会同时启用该渠道下所有端点
   const activeChannel = useMemo(() => {
@@ -1272,10 +1346,30 @@ const ChannelsPage = () => {
     return map;
   }, [groups]);
 
+  const isEndpointInHealthScope = useCallback((ep) => {
+    const channel = ep?.group || ep?.channel || ep?.name || 'default';
+    const endpointFailoverEnabled = ep?.failoverEnabled !== false;
+    if (!endpointFailoverEnabled) return false;
+
+    if (channelFailoverEnabled) {
+      const gi = groupInfoMap.get(channel);
+      return gi?.paused ? false : true;
+    }
+
+    return channel === activeChannel;
+  }, [activeChannel, channelFailoverEnabled, groupInfoMap]);
+
+  const scopedDisplayEndpoints = useMemo(() => {
+    return (displayEndpoints || []).map((ep) => ({
+      ...ep,
+      _health_scope: isEndpointInHealthScope(ep)
+    }));
+  }, [displayEndpoints, isEndpointInHealthScope]);
+
   const channelSections = useMemo(() => {
     const getChannelKey = (ep) => ep.group || ep.channel || ep.name || 'default';
     const map = new Map(channelOptions.map((name) => [name, []]));
-    displayEndpoints.forEach((ep) => {
+    scopedDisplayEndpoints.forEach((ep) => {
       const key = getChannelKey(ep);
       if (!map.has(key)) map.set(key, []);
       map.get(key).push(ep);
@@ -1330,18 +1424,24 @@ const ChannelsPage = () => {
       if (byCreated !== 0) return byCreated;
       return (a.name || '').localeCompare(b.name || '');
     });
-  }, [activeChannel, channelOptions, channelsMeta, displayEndpoints, groupInfoMap]);
+  }, [activeChannel, channelOptions, channelsMeta, groupInfoMap, scopedDisplayEndpoints]);
+
+  // 渠道列表变化时重置展开状态，避免“行索引重排”导致的错位联动
+  useEffect(() => {
+    setExpandedRows(new Set());
+    setExpandedChannels(new Set());
+  }, [channelSections.length, isTwoColumnLayout]);
 
   // 计算统计数据
   const displayStats = isSqliteMode
     ? {
-        total: storageEndpoints.length,
-        healthy: storageEndpoints.filter(e => e.healthy).length,
-        unhealthy: storageEndpoints.filter(e => !e.healthy && e.lastCheck).length,
-        unchecked: storageEndpoints.filter(e => !e.lastCheck).length,
-        cooldown: storageEndpoints.filter(e => e.in_cooldown || e.inCooldown).length,
-        healthPercentage: storageEndpoints.length > 0
-          ? ((storageEndpoints.filter(e => e.healthy).length / storageEndpoints.length) * 100).toFixed(1)
+        total: scopedDisplayEndpoints.length,
+        healthy: scopedDisplayEndpoints.filter(e => e._health_scope && e.healthy).length,
+        unhealthy: scopedDisplayEndpoints.filter(e => e._health_scope && !e.healthy && (e.lastCheck || e.last_check)).length,
+        unchecked: scopedDisplayEndpoints.filter(e => !e._health_scope || e.never_checked || e.neverChecked || (!e.lastCheck && !e.last_check)).length,
+        cooldown: scopedDisplayEndpoints.filter(e => e.in_cooldown || e.inCooldown).length,
+        healthPercentage: scopedDisplayEndpoints.filter(e => e._health_scope).length > 0
+          ? ((scopedDisplayEndpoints.filter(e => e._health_scope && e.healthy).length / scopedDisplayEndpoints.filter(e => e._health_scope).length) * 100).toFixed(1)
           : 0
       }
     : { ...stats, cooldown: 0 };
@@ -1462,11 +1562,32 @@ const ChannelsPage = () => {
       await loadGroups();
     } catch (err) {
       console.error('删除失败:', err);
-      alert(`删除失败: ${getErrorMessage(err, '未知错误')}`);
+      setActionError(`删除失败: ${getErrorMessage(err, '未知错误')}`);
     } finally {
       setDeleteLoading(false);
     }
   };
+
+  const performDeactivateChannel = useCallback(async (channelName) => {
+    if (!isSqliteMode) return;
+
+    try {
+      setDeactivateChannelLoading(true);
+      setActionError('');
+
+      const representativeId = storageEndpoints.find(e => e.channel === channelName)?.id;
+      if (!representativeId) throw new Error('未找到可用于停用的端点记录');
+
+      await toggleEndpointRecordByID(representativeId, false);
+      await loadStorageStatus();
+      await loadGroups();
+    } catch (err) {
+      console.error('停用渠道失败:', err);
+      setActionError(`停用失败: ${getErrorMessage(err, '未知错误')}`);
+    } finally {
+      setDeactivateChannelLoading(false);
+    }
+  }, [isSqliteMode, loadGroups, loadStorageStatus, storageEndpoints]);
 
   // 错误状态
   if (error && !isSqliteMode) {
@@ -1583,7 +1704,7 @@ const ChannelsPage = () => {
         </div>
         <div className="bg-white rounded-xl border border-rose-200/60 p-4 shadow-sm">
           <div className="text-2xl font-bold text-rose-600">{displayStats.unhealthy}</div>
-          <div className="text-sm text-slate-500">不健康端点</div>
+          <div className="text-sm text-slate-500">异常端点</div>
         </div>
         {/* 冷却中端点卡片 - 仅在有冷却端点时显示 */}
         {displayStats.cooldown > 0 && (
@@ -1620,7 +1741,7 @@ const ChannelsPage = () => {
         </div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {channelSections.map((section) => (
+          {channelSections.map((section, idx) => (
             <ChannelCard
               key={section.name}
               channelName={section.name}
@@ -1631,7 +1752,26 @@ const ChannelsPage = () => {
               activeChannelName={activeChannel}
               isSqliteMode={isSqliteMode}
               channelFailoverEnabled={channelFailoverEnabled}
-              loading={channelActionLoading}
+              expanded={isTwoColumnLayout ? expandedRows.has(Math.floor(idx / 2)) : expandedChannels.has(section.name)}
+              onToggleExpanded={() => {
+                if (isTwoColumnLayout) {
+                  const row = Math.floor(idx / 2);
+                  setExpandedRows((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(row)) next.delete(row);
+                    else next.add(row);
+                    return next;
+                  });
+                } else {
+                  setExpandedChannels((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(section.name)) next.delete(section.name);
+                    else next.add(section.name);
+                    return next;
+                  });
+                }
+              }}
+              loading={channelActionLoading || deactivateChannelLoading}
               onOpenEndpoint={openEndpointDetail}
               onToggleEndpointFailover={isSqliteMode ? handleToggleEndpointFailover : undefined}
               onActivate={async (channelName) => {
@@ -1646,29 +1786,20 @@ const ChannelsPage = () => {
                   await loadGroups();
                 } catch (err) {
                   console.error('激活渠道失败:', err);
-                  alert(`激活失败: ${getErrorMessage(err, '未知错误')}`);
+                  setActionError(`激活失败: ${getErrorMessage(err, '未知错误')}`);
                 } finally {
                   setChannelActionLoading(false);
                 }
               }}
               onDeactivate={async (channelName) => {
                 if (!isSqliteMode) return;
-                const confirmed = window.confirm(`确定要停用渠道 "${channelName}" 吗？停用后将没有激活渠道，所有请求会失败直到再次激活。`);
-                if (!confirmed) return;
 
-                try {
-                  setChannelActionLoading(true);
-                  const representativeId = storageEndpoints.find(e => e.channel === channelName)?.id;
-                  if (!representativeId) throw new Error('未找到可用于停用的端点记录');
-                  await toggleEndpointRecordByID(representativeId, false);
-                  await loadStorageStatus();
-                  await loadGroups();
-                } catch (err) {
-                  console.error('停用渠道失败:', err);
-                  alert(`停用失败: ${getErrorMessage(err, '未知错误')}`);
-                } finally {
-                  setChannelActionLoading(false);
+                const needConfirm = !channelFailoverEnabled || channelSections.length <= 1;
+                if (needConfirm) {
+                  setDeactivateChannelTarget({ name: channelName });
+                  return;
                 }
+                await performDeactivateChannel(channelName);
               }}
               onPause={async (channelName) => {
                 try {
@@ -1677,7 +1808,7 @@ const ChannelsPage = () => {
                   await loadGroups();
                 } catch (err) {
                   console.error('暂停渠道失败:', err);
-                  alert(`暂停失败: ${getErrorMessage(err, '未知错误')}`);
+                  setActionError(`暂停失败: ${getErrorMessage(err, '未知错误')}`);
                 } finally {
                   setChannelActionLoading(false);
                 }
@@ -1689,7 +1820,7 @@ const ChannelsPage = () => {
                   await loadGroups();
                 } catch (err) {
                   console.error('恢复渠道失败:', err);
-                  alert(`恢复失败: ${getErrorMessage(err, '未知错误')}`);
+                  setActionError(`恢复失败: ${getErrorMessage(err, '未知错误')}`);
                 } finally {
                   setChannelActionLoading(false);
                 }
@@ -1786,12 +1917,47 @@ const ChannelsPage = () => {
               await loadChannelsMeta();
             } catch (err) {
               console.error('删除渠道失败:', err);
-              alert(`删除渠道失败: ${getErrorMessage(err, '未知错误')}`);
+              setActionError(`删除渠道失败: ${getErrorMessage(err, '未知错误')}`);
             } finally {
               setDeleteChannelLoading(false);
             }
           }}
         />
+      )}
+
+      {deactivateChannelTarget?.name && (
+        <DeactivateChannelConfirmDialog
+          channelName={deactivateChannelTarget.name}
+          loading={deactivateChannelLoading}
+          onCancel={() => setDeactivateChannelTarget(null)}
+          onConfirm={async () => {
+            const name = deactivateChannelTarget.name;
+            setDeactivateChannelTarget(null);
+            await performDeactivateChannel(name);
+          }}
+        />
+      )}
+
+      {actionError && (
+        <div className="fixed inset-0 bg-black/50 flex items-start justify-center z-50 animate-fade-in pt-[20vh]">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="p-3 bg-rose-100 rounded-full">
+                <AlertTriangle className="text-rose-600" size={24} />
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold text-slate-900">操作失败</h3>
+                <p className="text-sm text-slate-500">请检查配置或稍后重试</p>
+              </div>
+            </div>
+            <p className="text-slate-700 mb-4 whitespace-pre-wrap">{actionError}</p>
+            <div className="flex justify-end gap-3">
+              <Button variant="ghost" onClick={() => setActionError('')}>
+                关闭
+              </Button>
+            </div>
+          </div>
+        </div>
       )}
 
       <EndpointDetailModal

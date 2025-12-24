@@ -659,6 +659,7 @@ export const getEndpointHealthChart = async () => {
   return {
     healthy: data.healthy || 0,
     unhealthy: data.unhealthy || 0,
+    unchecked: data.unchecked || 0,
     total: data.total || 0
   };
 };

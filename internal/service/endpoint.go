@@ -275,6 +275,23 @@ func (s *EndpointService) DeactivateChannel(ctx context.Context, channel string)
 		return fmt.Errorf("渠道不能为空")
 	}
 
+	// 若停用的是当前活跃渠道，且启用“渠道间故障转移”，则应自动切换到下一个可用渠道（按路由策略选择）。
+	wasActive := false
+	var autoSwitchEnabled bool
+	if s.manager != nil {
+		if cfg := s.manager.GetConfig(); cfg != nil {
+			autoSwitchEnabled = cfg.Failover.Enabled
+		}
+		if gm := s.manager.GetGroupManager(); gm != nil {
+			for _, g := range gm.GetActiveGroups() {
+				if g != nil && g.Name == channel {
+					wasActive = true
+					break
+				}
+			}
+		}
+	}
+
 	records, err := s.store.ListByChannel(ctx, channel)
 	if err != nil {
 		return fmt.Errorf("获取渠道端点列表失败: %w", err)
@@ -301,6 +318,18 @@ func (s *EndpointService) DeactivateChannel(ctx context.Context, channel string)
 
 	if gm := s.manager.GetGroupManager(); gm != nil {
 		_ = gm.DeactivateGroup(channel)
+	}
+
+	if wasActive && autoSwitchEnabled && s.manager != nil {
+		if next, err := s.manager.SelectNextAvailableChannel(channel); err == nil && next != "" {
+			if err := s.ActivateChannel(ctx, next); err != nil {
+				slog.Warn(fmt.Sprintf("⚠️ [EndpointService] 停用活跃渠道后自动切换失败: %s -> %s: %v", channel, next, err))
+			} else {
+				slog.Info(fmt.Sprintf("✅ [EndpointService] 停用活跃渠道后已自动切换: %s -> %s", channel, next))
+			}
+		} else {
+			slog.Warn(fmt.Sprintf("⚠️ [EndpointService] 停用活跃渠道后无可切换渠道: %s", channel))
+		}
 	}
 
 	slog.Info(fmt.Sprintf("✅ [EndpointService] 已停用渠道: %s", channel))

@@ -115,24 +115,48 @@ func (a *App) ActivateGroup(name string) error {
 func (a *App) PauseGroup(name string) error {
 	a.mu.RLock()
 	manager := a.endpointManager
+	channelService := a.channelService
 	a.mu.RUnlock()
 
 	if manager == nil {
 		return fmt.Errorf("端点管理器未初始化")
 	}
 
-	// 默认暂停 1 小时
-	return manager.ManualPauseGroup(name, time.Hour)
+	// v6.2+: 暂停/恢复为“无限期直到手动恢复”，且在 SQLite 模式下持久化到 channels.failover_enabled
+	if channelService != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := channelService.SetFailoverEnabled(ctx, name, false); err != nil {
+			return err
+		}
+		a.syncChannelFailoverEnabledToEndpointManager(ctx)
+		a.emitEndpointUpdate()
+		return nil
+	}
+
+	return manager.ManualPauseGroup(name, 0)
 }
 
 // ResumeGroup 恢复指定组
 func (a *App) ResumeGroup(name string) error {
 	a.mu.RLock()
 	manager := a.endpointManager
+	channelService := a.channelService
 	a.mu.RUnlock()
 
 	if manager == nil {
 		return fmt.Errorf("端点管理器未初始化")
+	}
+
+	if channelService != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := channelService.SetFailoverEnabled(ctx, name, true); err != nil {
+			return err
+		}
+		a.syncChannelFailoverEnabledToEndpointManager(ctx)
+		a.emitEndpointUpdate()
+		return nil
 	}
 
 	return manager.ManualResumeGroup(name)

@@ -287,6 +287,11 @@ func (s *SQLiteAdapter) migrateSchema(ctx context.Context) error {
 			alterSQL:    "ALTER TABLE channels ADD COLUMN priority INTEGER DEFAULT 1",
 			description: "渠道优先级字段",
 		},
+		{
+			checkColumn: "failover_enabled",
+			alterSQL:    "ALTER TABLE channels ADD COLUMN failover_enabled INTEGER DEFAULT 1",
+			description: "渠道故障转移开关字段",
+		},
 	}
 
 	runMigrations := func(table string, migrations []struct {
