@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -42,14 +43,14 @@ type Endpoint struct {
 
 // Manager manages endpoints and their health status
 type Manager struct {
-	endpoints   []*Endpoint
-	endpointsMu sync.RWMutex // v5.0+: 保护 endpoints 切片的并发访问
-	config      *config.Config
-	client      *http.Client
-	ctx         context.Context
-	cancel      context.CancelFunc
-	wg          sync.WaitGroup
-	fastTester  *FastTester
+	endpoints    []*Endpoint
+	endpointsMu  sync.RWMutex // v5.0+: 保护 endpoints 切片的并发访问
+	config       *config.Config
+	client       *http.Client
+	ctx          context.Context
+	cancel       context.CancelFunc
+	wg           sync.WaitGroup
+	fastTester   *FastTester
 	groupManager *GroupManager
 	keyManager   *KeyManager // 管理多 API Key 状态
 	// EventBus for decoupled event publishing
@@ -67,6 +68,14 @@ func (m *Manager) UpdateChannelPriorities(priorities map[string]int) {
 		return
 	}
 	m.groupManager.UpdateChannelPriorities(priorities)
+}
+
+// UpdateChannelFailoverEnabled 同步“渠道是否参与渠道间故障转移”的开关到运行时组管理器。
+func (m *Manager) UpdateChannelFailoverEnabled(enabled map[string]bool) {
+	if m == nil || m.groupManager == nil {
+		return
+	}
+	m.groupManager.UpdateChannelFailoverEnabled(enabled)
 }
 
 // NewManager creates a new endpoint manager
@@ -115,7 +124,7 @@ func NewManager(cfg *config.Config) *Manager {
 		if apiKeyCount == 0 && endpointCfg.ApiKey != "" {
 			apiKeyCount = 1 // 单 API Key 算作 1 个
 		}
-		manager.keyManager.InitEndpoint(endpointCfg.Name, tokenCount, apiKeyCount)
+		manager.keyManager.InitEndpoint(endpointKeyFromConfig(endpointCfg), tokenCount, apiKeyCount)
 	}
 
 	// Set manager reference in fast tester for dynamic token resolution
@@ -169,16 +178,16 @@ func (m *Manager) UpdateConfig(cfg *config.Config) {
 func (m *Manager) GetTokenForEndpoint(ep *Endpoint) string {
 	// 1. 优先使用多 Tokens 配置（端点独立管理）
 	if len(ep.Config.Tokens) > 0 {
-		activeIndex := m.keyManager.GetActiveTokenIndex(ep.Config.Name)
+		activeIndex := m.keyManager.GetActiveTokenIndex(endpointKeyFromConfig(ep.Config))
 		if activeIndex >= 0 && activeIndex < len(ep.Config.Tokens) {
-			return ep.Config.Tokens[activeIndex].Value
+			return sanitizeCredential(ep.Config.Tokens[activeIndex].Value)
 		}
-		return ep.Config.Tokens[0].Value // 回退到第一个
+		return sanitizeCredential(ep.Config.Tokens[0].Value) // 回退到第一个
 	}
 
 	// 2. 使用单 Token 配置
 	if ep.Config.Token != "" {
-		return ep.Config.Token
+		return sanitizeCredential(ep.Config.Token)
 	}
 
 	// 3. 组内继承（仅对单 Token 保持原有行为，多 Token 不继承）
@@ -200,7 +209,7 @@ func (m *Manager) GetTokenForEndpoint(ep *Endpoint) string {
 
 		// If same group and has token (only single token inheritance)
 		if endpointGroup == groupName && endpoint.Config.Token != "" {
-			return endpoint.Config.Token
+			return sanitizeCredential(endpoint.Config.Token)
 		}
 	}
 
@@ -215,16 +224,16 @@ func (m *Manager) GetTokenForEndpoint(ep *Endpoint) string {
 func (m *Manager) GetApiKeyForEndpoint(ep *Endpoint) string {
 	// 1. 优先使用多 ApiKeys 配置（端点独立管理）
 	if len(ep.Config.ApiKeys) > 0 {
-		activeIndex := m.keyManager.GetActiveApiKeyIndex(ep.Config.Name)
+		activeIndex := m.keyManager.GetActiveApiKeyIndex(endpointKeyFromConfig(ep.Config))
 		if activeIndex >= 0 && activeIndex < len(ep.Config.ApiKeys) {
-			return ep.Config.ApiKeys[activeIndex].Value
+			return sanitizeCredential(ep.Config.ApiKeys[activeIndex].Value)
 		}
-		return ep.Config.ApiKeys[0].Value // 回退到第一个
+		return sanitizeCredential(ep.Config.ApiKeys[0].Value) // 回退到第一个
 	}
 
 	// 2. 使用单 ApiKey 配置
 	if ep.Config.ApiKey != "" {
-		return ep.Config.ApiKey
+		return sanitizeCredential(ep.Config.ApiKey)
 	}
 
 	// 3. 组内继承（仅对单 ApiKey 保持原有行为，多 ApiKey 不继承）
@@ -246,12 +255,20 @@ func (m *Manager) GetApiKeyForEndpoint(ep *Endpoint) string {
 
 		// If same group and has api-key (only single api-key inheritance)
 		if endpointGroup == groupName && endpoint.Config.ApiKey != "" {
-			return endpoint.Config.ApiKey
+			return sanitizeCredential(endpoint.Config.ApiKey)
 		}
 	}
 
 	// 4. No api-key found in the group
 	return ""
+}
+
+func sanitizeCredential(value string) string {
+	v := strings.TrimSpace(value)
+	v = strings.ReplaceAll(v, "\r", "")
+	v = strings.ReplaceAll(v, "\n", "")
+	v = strings.ReplaceAll(v, "\t", "")
+	return v
 }
 
 // GetConfig returns the manager's configuration

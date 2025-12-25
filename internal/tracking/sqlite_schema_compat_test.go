@@ -121,6 +121,9 @@ CREATE TABLE IF NOT EXISTS channels (
 	if !sqliteColumnExists(t, adapter.db, "channels", "priority") {
 		t.Fatalf("expected channels.priority to exist after InitSchema")
 	}
+	if !sqliteColumnExists(t, adapter.db, "channels", "failover_enabled") {
+		t.Fatalf("expected channels.failover_enabled to exist after InitSchema")
+	}
 }
 
 func sqliteColumnExists(t *testing.T, db *sql.DB, table, column string) bool {

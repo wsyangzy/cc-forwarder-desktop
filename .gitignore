@@ -79,3 +79,4 @@ build.log
 
 # 废弃代码
 internal/tracking/deprecated/
+.cunzhi-memory

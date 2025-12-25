@@ -5,7 +5,7 @@
 本文件用于记录本轮“端点 → 渠道（channel）”重构及相关优化的**详细实现**，便于后续继续迭代、排查回归与快速定位代码。
 
 起始基线：`25e801c8ddf9b2be5c683dd4221e888477dbb8f3`（tag: `v5.1.0`）  
-当前 HEAD：`c84a4a7`（建议发布为 `v6.0.1`）  
+当前 HEAD：`333efc8`（本地工作区存在未提交变更）  
 合并节点：`919e510 Merge branch 'feat/channel-priority'`
 
 ---
@@ -146,7 +146,7 @@
 
 ### 3.1 渠道管理页面（原 endpoints 页面语义升级）
 
-主页面：`frontend/src/pages/endpoints/index.jsx`
+主页面：`frontend/src/pages/channels/index.jsx`
 
 实现要点：
 - 以“渠道卡片”分块展示：大屏双列布局（两渠道同一行）
@@ -168,11 +168,11 @@
 - `frontend/src/pages/log-viewer/index.jsx`：调整标题结构，确保“系统日志”与“实时查看系统运行日志 · 共 N 条”同一垂直线对齐，并统一图标块样式。
 - `frontend/src/pages/overview/index.jsx`：概览页补齐标题图标与统一布局。
 - `frontend/src/pages/pricing/index.jsx`：基础定价页补齐标题图标与统一布局。
-- `frontend/src/pages/endpoints/index.jsx`：渠道管理页补齐标题图标与统一布局。
+- `frontend/src/pages/channels/index.jsx`：渠道管理页补齐标题图标与统一布局。
 
 ### 3.2 端点详情弹窗（美化 + 实用性）
 
-实现落点：`frontend/src/pages/endpoints/index.jsx`（`EndpointDetailModal`）
+实现落点：`frontend/src/pages/channels/index.jsx`（`EndpointDetailModal`）
 
 关键交互：
 - 点击遮罩（卡片外区域）关闭；点击卡片内部不关闭
@@ -185,7 +185,7 @@
 
 ### 3.3 端点表单（新建/编辑）
 
-实现落点：`frontend/src/pages/endpoints/components/EndpointForm.jsx`
+实现落点：`frontend/src/pages/channels/components/EndpointForm.jsx`
 
 实现要点：
 - 渠道字段：
@@ -215,6 +215,8 @@
 - migration/列检查与 ALTER：`internal/tracking/sqlite_adapter.go`
 
 关键变更：
+- `endpoints` 唯一性调整：从 `name` 全局唯一 → `UNIQUE(channel, name)`（允许不同渠道端点同名；同一渠道内不允许重名）
+  - 旧库若存在 `UNIQUE(name)` 会在启动迁移时重建 `endpoints` 表以移除旧约束（SQLite 无法直接 drop constraint）
 - `channels` 增加 `priority INTEGER DEFAULT 1`
 - 读取渠道列表时按稳定排序：`priority ASC, created_at DESC, name ASC`（store 层）
 - 说明：本版本以“端点”为统计/追踪维度，不引入“按 Token/API Key 聚合统计”的额外字段与汇总表（该需求已废案）。
@@ -287,8 +289,8 @@
   - 前端引入渠道行、删除确认、工具函数等基础组件。
 - 代表文件：
   - `internal/proxy/handlers/streaming.go`
-  - `frontend/src/pages/endpoints/index.jsx`
-  - `frontend/src/pages/endpoints/components/*`
+  - `frontend/src/pages/channels/index.jsx`
+  - `frontend/src/pages/channels/components/*`
 
 ### 7.2 `23fb80a` fix: 双 message_start EOF 重试提示
 - 做了什么：提升 EOF 重试提示触发的稳定性与兼容性。
@@ -316,7 +318,7 @@
   - `internal/proxy/handlers/regular.go`
   - `internal/proxy/handlers/streaming.go`
   - `internal/endpoint/failover.go`
-  - `frontend/src/pages/endpoints/index.jsx`
+  - `frontend/src/pages/channels/index.jsx`
 
 ### 7.5 `c72c38a` fix(database): 迁移逻辑与并发安全
 - 做了什么：修复迁移/并发导致的“创建超时、UI 延迟显示、加载失败”等典型问题根源。
@@ -353,7 +355,7 @@
   - 前端：渠道 select 美化；名称字段可编辑。
 - 代表文件：
   - `app_api_storage.go`
-  - `frontend/src/pages/endpoints/components/EndpointForm.jsx`
+  - `frontend/src/pages/channels/components/EndpointForm.jsx`
 
 ### 7.8 `15206c8` refactor(frontend): 表单/详情体验优化
 - 做了什么：
@@ -362,9 +364,9 @@
   - Token/API Key 复制原始值按钮；
   - 清理无用“复制配置”入口。
 - 代表文件：
-  - `frontend/src/pages/endpoints/index.jsx`
-  - `frontend/src/pages/endpoints/components/EndpointForm.jsx`
-  - `frontend/src/pages/endpoints/components/EndpointRow.jsx`
+  - `frontend/src/pages/channels/index.jsx`
+  - `frontend/src/pages/channels/components/EndpointForm.jsx`
+  - `frontend/src/pages/channels/components/EndpointRow.jsx`
 
 ### 7.9 `853339a` feat(failover): 跨渠道切换也遵循 strategy
 - 做了什么：
@@ -398,6 +400,94 @@
   - `internal/store/sqlite_busy_retry.go`
   - `internal/store/settings.go`
   - `internal/store/model_pricing.go`
+
+### 7.12（working tree）fix(failover/health): 渠道级暂停持久化（无限期）+ 健康检查范围收敛
+- 做了什么：
+  - “暂停/恢复”改为渠道级开关，持久化到 SQLite：暂停后无限期生效，直到手动恢复；重启应用不会丢失状态。
+  - 健康检查覆盖范围收敛（减少资源消耗与日志量）：
+    - 启用渠道间故障转移：仅检查“参与渠道间故障转移”的渠道内、且“参与故障转移”的端点。
+    - 未启用：仅检查“当前活跃渠道”内、且“参与故障转移”的端点。
+- 怎么做：
+  - SQLite：新增 `channels.failover_enabled` 并在启动时自动迁移；服务层更新 CRUD，避免普通更新覆盖该字段。
+  - 运行时：启动时把 `channels.failover_enabled` 同步到 `GroupManager`，并在健康检查阶段基于该开关过滤端点。
+- 代表文件：
+  - `internal/tracking/schema.sql`
+  - `internal/tracking/sqlite_adapter.go`
+  - `internal/store/channel.go`
+  - `internal/service/channel.go`
+  - `app_api_storage.go`
+  - `app.go`
+  - `internal/endpoint/health_check.go`
+
+### 7.13（working tree）fix(channels-ui): 停用渠道自动切换 + 弹窗交互优化
+- 做了什么：
+  - 启用渠道间故障转移时，停用当前活跃渠道会按路由策略自动切换到下一个可用渠道；仅当“只剩一个渠道”或“未启用渠道间故障转移”时提示“停用后无激活渠道”。
+  - 将原本浏览器 `window.confirm/alert` 改为应用内弹窗，交互更符合桌面应用。
+  - 双列布局下，同一行两个渠道卡片的“展开/收起”联动，避免两侧状态不一致。
+- 代表文件：
+  - `internal/endpoint/failover.go`
+  - `internal/service/endpoint.go`
+  - `frontend/src/pages/channels/index.jsx`
+
+### 7.14（working tree）fix(ui/overview): 端点健康三态（健康/异常/未检测）+ 渠道健康标签文案
+- 做了什么：
+  - 概览端点健康统计改为三态：健康、异常、未检测（灰色）。
+  - 渠道页端点/渠道的“未参与检测”提示不再单独展示，避免信息噪声；对不在检查范围的端点统一归入“未检测”。
+  - 渠道卡片的 `健康 n/n` 在“当前渠道不在检查范围”时改为 `检测 <占位文案>`，避免出现“健康 未检测”的误导（占位文案可按产品口径调整）。
+- 代表文件：
+  - `app_api_chart.go`
+  - `frontend/src/pages/overview/components/EndpointHealthChart.jsx`
+  - `frontend/src/pages/overview/components/KPICardsGrid.jsx`
+  - `frontend/src/pages/channels/index.jsx`
+  - `frontend/src/utils/api.js`
+  - `frontend/src/utils/wailsApi.js`
+
+### 7.15（working tree）feat(tray): Windows 最小化到系统托盘 + 单实例唤起
+- 做了什么：
+  - Windows 下提供系统托盘图标与右键菜单（显示/隐藏/退出）。
+  - 最小化窗口后自动隐藏到托盘，后台继续运行。
+  - 启用单实例锁：当应用已在托盘中运行时再次启动会唤起主窗口。
+  - 保持"关闭=退出"语义（不把关闭按钮改成隐藏）。
+- 怎么做（KISS）：
+  - 不引入第三方 systray 依赖，直接基于 Win32 `Shell_NotifyIconW` + 消息循环实现；非 Windows 平台为 noop。
+- 代表文件：
+  - `internal/tray/tray.go`
+  - `internal/tray/tray_windows.go`
+  - `internal/tray/tray_stub.go`
+  - `app.go`
+  - `main.go`
+
+### 7.16（working tree）refactor(tray): 替换为成熟的第三方托盘库 + 简化菜单
+- 背景问题：
+  - 自定义 Windows API 实现存在严重缺陷：托盘图标左右键点击完全无响应（消息循环未接收到事件）。
+  - Tooltip 显示正常，但用户无法通过托盘菜单恢复窗口或退出应用，导致用户"被困"。
+  - 窗口显示/隐藏使用 `runtime.WindowExecJS` 调用 JS，窗口隐藏后 JS runtime 不可用导致失败。
+- 做了什么：
+  - 引入成熟的第三方托盘库 `github.com/getlantern/systray` v1.2.2 替换自定义实现。
+  - 修复窗口显示/隐藏：直接调用 Wails Runtime API（`runtime.WindowShow/Hide/Unminimise`），不依赖 JS。
+  - 修复 `beforeClose` 逻辑：用户点击 X 时隐藏到托盘并返回 `true` 阻止退出（确保后台服务持续运行）。
+  - 简化托盘菜单：移除冗余的"隐藏主窗口"选项（用户直接点窗口 X 即可隐藏）。
+  - 移除轮询机制：删除 `watchMinimiseToTray` 和 `trayStopCh`，简化应用逻辑。
+- 怎么做（技术细节）：
+  - 新建 `internal/tray/tray_systray.go`：基于 `systray.Run` 实现托盘控制器，在单独 goroutine 中运行。
+  - 备份旧实现：`tray_windows.go` → `tray_windows.go.bak`。
+  - 更新 `tray_stub.go` build tag：从 `!windows` 改为 `stub`，避免与 systray 冲突。
+  - 简化 `setupTray()`：移除 `trayStopCh` 相关逻辑。
+  - 简化 `shutdown()`：直接调用 `trayController.Stop()`，由 systray 自动清理。
+  - 托盘菜单优化：保留"显示主窗口"和"退出"，移除"隐藏主窗口"（KISS 原则）。
+- 最终效果：
+  - ✅ Tooltip 正常显示（"CC-Forwarder {version}"）
+  - ✅ 右键菜单可靠响应（显示主窗口、退出）
+  - ✅ 点击窗口 X 隐藏到托盘，后台服务持续运行
+  - ✅ 托盘"退出"正常关闭应用
+  - ⚠️ 左键单击托盘图标无响应（systray 库设计限制，仅支持右键菜单）
+- 代表文件：
+  - `go.mod` / `go.sum`：新增 `github.com/getlantern/systray` 及其依赖
+  - `internal/tray/tray_systray.go`：新建（systray 实现）
+  - `internal/tray/tray_windows.go.bak`：备份（原自定义实现）
+  - `internal/tray/tray_stub.go`：更新 build tag
+  - `app.go`：简化 `setupTray()`、`shutdown()`、`beforeClose()`；移除 `watchMinimiseToTray()` 和 `trayStopCh` 字段
+  - `main.go`：更新注释说明托盘语义
 
 ---
 

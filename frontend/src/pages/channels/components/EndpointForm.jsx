@@ -7,6 +7,18 @@ import { useState } from 'react';
 import { X, Save, AlertCircle, ChevronDown, ChevronUp, Eye, EyeOff } from 'lucide-react';
 import { Button } from '@components/ui';
 
+const getErrorMessage = (error, fallback = '保存失败') => {
+  if (!error) return fallback;
+  if (typeof error === 'string') return error || fallback;
+  if (error instanceof Error) return error.message || fallback;
+  if (typeof error?.message === 'string' && error.message) return error.message;
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+};
+
 // ============================================
 // 表单输入组件
 // ============================================
@@ -133,6 +145,7 @@ const FormCheckbox = ({ label, name, checked, onChange, help, disabled = false }
 const EndpointForm = ({
   endpoint = null,  // null = 新建模式, object = 编辑模式
   channels = [],
+  existingEndpoints = [],
   defaultChannel = '',
   lockChannel = false,
   onSave,
@@ -226,6 +239,23 @@ const EndpointForm = ({
       newErrors.token = '请输入 Token';
     }
 
+    const targetChannel = formData.channel.trim();
+    const targetName = formData.name.trim();
+    if (targetChannel && targetName && Array.isArray(existingEndpoints) && existingEndpoints.length > 0) {
+      const conflict = existingEndpoints.find((ep) => {
+        if (!ep) return false;
+        const epChannel = String(ep.channel || '').trim();
+        const epName = String(ep.name || '').trim();
+        if (epChannel !== targetChannel || epName !== targetName) return false;
+        if (isEditMode && endpoint?.id && ep.id === endpoint.id) return false;
+        return true;
+      });
+
+      if (conflict) {
+        newErrors.submit = `同一渠道内端点名称必须唯一：渠道 '${targetChannel}' 已存在同名端点 '${targetName}'，请修改名称或选择其他渠道`;
+      }
+    }
+
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
@@ -242,7 +272,7 @@ const EndpointForm = ({
       await onSave(formData);
     } catch (error) {
       console.error('保存失败:', error);
-      setErrors({ submit: error.message || '保存失败' });
+      setErrors({ submit: getErrorMessage(error, '保存失败') });
     }
   };
 

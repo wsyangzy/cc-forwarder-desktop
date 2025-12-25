@@ -9,13 +9,13 @@ import (
 // KeyManager 管理所有端点的 API Key 状态
 // 支持每个端点独立管理多个 Token 和 API Key，通过索引切换当前使用的 Key
 type KeyManager struct {
-	states map[string]*EndpointKeyState // endpoint name -> state
+	states map[string]*EndpointKeyState // endpointKey -> state
 	mu     sync.RWMutex
 }
 
 // EndpointKeyState 端点的 Key 状态
 type EndpointKeyState struct {
-	EndpointName      string    // 端点名称
+	EndpointName      string    // 端点标识（channel::name 或 name，历史字段名保留以兼容测试/外部调用）
 	ActiveTokenIndex  int       // 当前激活的 Token 索引
 	ActiveApiKeyIndex int       // 当前激活的 API Key 索引
 	TokenCount        int       // Token 总数
@@ -32,12 +32,12 @@ func NewKeyManager() *KeyManager {
 }
 
 // InitEndpoint 初始化端点的 Key 状态
-func (km *KeyManager) InitEndpoint(endpointName string, tokenCount, apiKeyCount int) {
+func (km *KeyManager) InitEndpoint(endpointKey string, tokenCount, apiKeyCount int) {
 	km.mu.Lock()
 	defer km.mu.Unlock()
 
-	km.states[endpointName] = &EndpointKeyState{
-		EndpointName:      endpointName,
+	km.states[endpointKey] = &EndpointKeyState{
+		EndpointName:      endpointKey,
 		ActiveTokenIndex:  0, // 默认使用第一个
 		ActiveApiKeyIndex: 0,
 		TokenCount:        tokenCount,
@@ -46,11 +46,11 @@ func (km *KeyManager) InitEndpoint(endpointName string, tokenCount, apiKeyCount 
 }
 
 // GetActiveTokenIndex 获取当前激活的 Token 索引
-func (km *KeyManager) GetActiveTokenIndex(endpointName string) int {
+func (km *KeyManager) GetActiveTokenIndex(endpointKey string) int {
 	km.mu.RLock()
 	defer km.mu.RUnlock()
 
-	if state, exists := km.states[endpointName]; exists {
+	if state, exists := km.states[endpointKey]; exists {
 		state.mu.RLock()
 		defer state.mu.RUnlock()
 		return state.ActiveTokenIndex
@@ -59,11 +59,11 @@ func (km *KeyManager) GetActiveTokenIndex(endpointName string) int {
 }
 
 // GetActiveApiKeyIndex 获取当前激活的 API Key 索引
-func (km *KeyManager) GetActiveApiKeyIndex(endpointName string) int {
+func (km *KeyManager) GetActiveApiKeyIndex(endpointKey string) int {
 	km.mu.RLock()
 	defer km.mu.RUnlock()
 
-	if state, exists := km.states[endpointName]; exists {
+	if state, exists := km.states[endpointKey]; exists {
 		state.mu.RLock()
 		defer state.mu.RUnlock()
 		return state.ActiveApiKeyIndex
@@ -72,13 +72,13 @@ func (km *KeyManager) GetActiveApiKeyIndex(endpointName string) int {
 }
 
 // SwitchToken 切换端点的 Token
-func (km *KeyManager) SwitchToken(endpointName string, index int) error {
+func (km *KeyManager) SwitchToken(endpointKey string, index int) error {
 	km.mu.Lock()
 	defer km.mu.Unlock()
 
-	state, exists := km.states[endpointName]
+	state, exists := km.states[endpointKey]
 	if !exists {
-		return fmt.Errorf("端点 '%s' 未找到", endpointName)
+		return fmt.Errorf("端点 '%s' 未找到", endpointKey)
 	}
 
 	state.mu.Lock()
@@ -94,13 +94,13 @@ func (km *KeyManager) SwitchToken(endpointName string, index int) error {
 }
 
 // SwitchApiKey 切换端点的 API Key
-func (km *KeyManager) SwitchApiKey(endpointName string, index int) error {
+func (km *KeyManager) SwitchApiKey(endpointKey string, index int) error {
 	km.mu.Lock()
 	defer km.mu.Unlock()
 
-	state, exists := km.states[endpointName]
+	state, exists := km.states[endpointKey]
 	if !exists {
-		return fmt.Errorf("端点 '%s' 未找到", endpointName)
+		return fmt.Errorf("端点 '%s' 未找到", endpointKey)
 	}
 
 	state.mu.Lock()
@@ -116,11 +116,11 @@ func (km *KeyManager) SwitchApiKey(endpointName string, index int) error {
 }
 
 // GetEndpointKeyState 获取端点的完整 Key 状态（返回副本，线程安全）
-func (km *KeyManager) GetEndpointKeyState(endpointName string) *EndpointKeyState {
+func (km *KeyManager) GetEndpointKeyState(endpointKey string) *EndpointKeyState {
 	km.mu.RLock()
 	defer km.mu.RUnlock()
 
-	if state, exists := km.states[endpointName]; exists {
+	if state, exists := km.states[endpointKey]; exists {
 		state.mu.RLock()
 		defer state.mu.RUnlock()
 		// 返回副本
@@ -158,11 +158,11 @@ func (km *KeyManager) GetAllStates() map[string]*EndpointKeyState {
 }
 
 // HasMultipleTokens 检查端点是否配置了多个 Token
-func (km *KeyManager) HasMultipleTokens(endpointName string) bool {
+func (km *KeyManager) HasMultipleTokens(endpointKey string) bool {
 	km.mu.RLock()
 	defer km.mu.RUnlock()
 
-	if state, exists := km.states[endpointName]; exists {
+	if state, exists := km.states[endpointKey]; exists {
 		state.mu.RLock()
 		defer state.mu.RUnlock()
 		return state.TokenCount > 1
@@ -171,11 +171,11 @@ func (km *KeyManager) HasMultipleTokens(endpointName string) bool {
 }
 
 // HasMultipleApiKeys 检查端点是否配置了多个 API Key
-func (km *KeyManager) HasMultipleApiKeys(endpointName string) bool {
+func (km *KeyManager) HasMultipleApiKeys(endpointKey string) bool {
 	km.mu.RLock()
 	defer km.mu.RUnlock()
 
-	if state, exists := km.states[endpointName]; exists {
+	if state, exists := km.states[endpointKey]; exists {
 		state.mu.RLock()
 		defer state.mu.RUnlock()
 		return state.ApiKeyCount > 1
@@ -184,11 +184,11 @@ func (km *KeyManager) HasMultipleApiKeys(endpointName string) bool {
 }
 
 // UpdateEndpointKeyCount 更新端点的 Key 数量（用于配置热更新）
-func (km *KeyManager) UpdateEndpointKeyCount(endpointName string, tokenCount, apiKeyCount int) {
+func (km *KeyManager) UpdateEndpointKeyCount(endpointKey string, tokenCount, apiKeyCount int) {
 	km.mu.Lock()
 	defer km.mu.Unlock()
 
-	if state, exists := km.states[endpointName]; exists {
+	if state, exists := km.states[endpointKey]; exists {
 		state.mu.Lock()
 		defer state.mu.Unlock()
 
@@ -204,8 +204,8 @@ func (km *KeyManager) UpdateEndpointKeyCount(endpointName string, tokenCount, ap
 		}
 	} else {
 		// 端点不存在，创建新状态
-		km.states[endpointName] = &EndpointKeyState{
-			EndpointName:      endpointName,
+		km.states[endpointKey] = &EndpointKeyState{
+			EndpointName:      endpointKey,
 			ActiveTokenIndex:  0,
 			ActiveApiKeyIndex: 0,
 			TokenCount:        tokenCount,
@@ -215,8 +215,29 @@ func (km *KeyManager) UpdateEndpointKeyCount(endpointName string, tokenCount, ap
 }
 
 // RemoveEndpoint 移除端点的 Key 状态（用于配置热更新）
-func (km *KeyManager) RemoveEndpoint(endpointName string) {
+func (km *KeyManager) RemoveEndpoint(endpointKey string) {
 	km.mu.Lock()
 	defer km.mu.Unlock()
-	delete(km.states, endpointName)
+	delete(km.states, endpointKey)
+}
+
+// RenameEndpointKey 在端点标识发生变化时迁移 Key 状态（例如：端点改名或移动渠道）。
+// 注意：调用方需保证 newKey 不与现有端点冲突。
+func (km *KeyManager) RenameEndpointKey(oldKey, newKey string) {
+	if oldKey == "" || newKey == "" || oldKey == newKey {
+		return
+	}
+
+	km.mu.Lock()
+	defer km.mu.Unlock()
+
+	state, ok := km.states[oldKey]
+	if !ok {
+		return
+	}
+	delete(km.states, oldKey)
+	state.mu.Lock()
+	state.EndpointName = newKey
+	state.mu.Unlock()
+	km.states[newKey] = state
 }

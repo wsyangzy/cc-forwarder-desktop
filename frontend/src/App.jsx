@@ -10,7 +10,7 @@ import useSSE from '@hooks/useSSE.js';
 
 // 懒加载页面组件
 const OverviewPage = lazy(() => import('@pages/overview/index.jsx'));
-const EndpointsPage = lazy(() => import('@pages/endpoints/index.jsx'));
+const ChannelsPage = lazy(() => import('@pages/channels/index.jsx'));
 // v4.0: 组管理页面已移除，配置简化后不再需要独立的组管理功能
 // const GroupsPage = lazy(() => import('@pages/groups/index.jsx'));
 const RequestsPage = lazy(() => import('@pages/requests/index.jsx'));
@@ -53,7 +53,7 @@ function App() {
   const renderPage = () => {
     const pages = {
       overview: <OverviewPage />,
-      endpoints: <EndpointsPage />,
+      channels: <ChannelsPage />,
       // v4.0: 组管理页面已移除
       // groups: <GroupsPage />,
       requests: <RequestsPage />,

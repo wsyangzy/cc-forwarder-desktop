@@ -485,15 +485,15 @@ export const fetchEndpointHealthData = async () => {
     }
 
     const data = await fetchWithTimeout('/api/v1/chart/endpoint-health');
-    // 返回 { healthy: N, unhealthy: N } 或原始 Chart.js 格式
+    // 返回 { healthy: N, unhealthy: N, unchecked?: N } 或原始 Chart.js 格式
     if (data.labels && data.datasets) {
       const [healthy, unhealthy] = data.datasets[0]?.data || [0, 0];
-      return { healthy, unhealthy };
+      return { healthy, unhealthy, unchecked: 0 };
     }
-    return data;
+    return { healthy: data.healthy || 0, unhealthy: data.unhealthy || 0, unchecked: data.unchecked || 0 };
   } catch (error) {
     console.error('获取端点健康状态数据失败:', error);
-    return { healthy: 0, unhealthy: 0 };
+    return { healthy: 0, unhealthy: 0, unchecked: 0 };
   }
 };
 

@@ -38,6 +38,10 @@ export function DeleteEndpointRecord(arg1) {
   return window['go']['main']['App']['DeleteEndpointRecord'](arg1);
 }
 
+export function DeleteEndpointRecordByID(arg1) {
+  return window['go']['main']['App']['DeleteEndpointRecordByID'](arg1);
+}
+
 export function DeleteModelPricing(arg1) {
   return window['go']['main']['App']['DeleteModelPricing'](arg1);
 }
@@ -166,12 +170,20 @@ export function GetUsageSummary(arg1, arg2) {
   return window['go']['main']['App']['GetUsageSummary'](arg1, arg2);
 }
 
+export function HideMainWindow() {
+  return window['go']['main']['App']['HideMainWindow']();
+}
+
 export function IsProxyRunning() {
   return window['go']['main']['App']['IsProxyRunning']();
 }
 
 export function PauseGroup(arg1) {
   return window['go']['main']['App']['PauseGroup'](arg1);
+}
+
+export function RequestQuit() {
+  return window['go']['main']['App']['RequestQuit']();
 }
 
 export function ResetCategorySettings(arg1) {
@@ -190,8 +202,16 @@ export function SetEndpointFailoverEnabled(arg1, arg2) {
   return window['go']['main']['App']['SetEndpointFailoverEnabled'](arg1, arg2);
 }
 
+export function SetEndpointFailoverEnabledByID(arg1, arg2) {
+  return window['go']['main']['App']['SetEndpointFailoverEnabledByID'](arg1, arg2);
+}
+
 export function SetEndpointPriority(arg1, arg2) {
   return window['go']['main']['App']['SetEndpointPriority'](arg1, arg2);
+}
+
+export function ShowMainWindow() {
+  return window['go']['main']['App']['ShowMainWindow']();
 }
 
 export function StartLogStream() {
@@ -210,6 +230,10 @@ export function ToggleEndpointRecord(arg1, arg2) {
   return window['go']['main']['App']['ToggleEndpointRecord'](arg1, arg2);
 }
 
+export function ToggleEndpointRecordByID(arg1, arg2) {
+  return window['go']['main']['App']['ToggleEndpointRecordByID'](arg1, arg2);
+}
+
 export function TriggerHealthCheck(arg1) {
   return window['go']['main']['App']['TriggerHealthCheck'](arg1);
 }
@@ -220,6 +244,10 @@ export function UpdateChannel(arg1) {
 
 export function UpdateEndpointRecord(arg1, arg2) {
   return window['go']['main']['App']['UpdateEndpointRecord'](arg1, arg2);
+}
+
+export function UpdateEndpointRecordByID(arg1, arg2) {
+  return window['go']['main']['App']['UpdateEndpointRecordByID'](arg1, arg2);
 }
 
 export function UpdateModelPricing(arg1, arg2) {

@@ -6,6 +6,7 @@ package endpoint
 import (
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"cc-forwarder/config"
@@ -36,7 +37,7 @@ func (m *Manager) SyncEndpoints(configs []config.EndpointConfig) {
 		if apiKeyCount == 0 && cfg.ApiKey != "" {
 			apiKeyCount = 1
 		}
-		m.keyManager.InitEndpoint(cfg.Name, tokenCount, apiKeyCount)
+		m.keyManager.InitEndpoint(endpointKeyFromConfig(cfg), tokenCount, apiKeyCount)
 	}
 
 	// 使用写锁替换端点列表
@@ -53,12 +54,13 @@ func (m *Manager) SyncEndpoints(configs []config.EndpointConfig) {
 // AddEndpoint 动态添加端点（v5.0+ 新增）
 // 线程安全地将新端点添加到管理器中
 func (m *Manager) AddEndpoint(cfg config.EndpointConfig) error {
-	// 验证端点名称唯一性
+	// 验证端点标识唯一性（SQLite/channel 模式下允许不同渠道同名端点）
+	cfgKey := endpointKeyFromConfig(cfg)
 	m.endpointsMu.RLock()
 	for _, ep := range m.endpoints {
-		if ep.Config.Name == cfg.Name {
+		if endpointKeyFromConfig(ep.Config) == cfgKey {
 			m.endpointsMu.RUnlock()
-			return fmt.Errorf("端点 '%s' 已存在", cfg.Name)
+			return fmt.Errorf("端点 '%s' 已存在", cfgKey)
 		}
 	}
 	m.endpointsMu.RUnlock()
@@ -82,7 +84,7 @@ func (m *Manager) AddEndpoint(cfg config.EndpointConfig) error {
 	if apiKeyCount == 0 && cfg.ApiKey != "" {
 		apiKeyCount = 1
 	}
-	m.keyManager.InitEndpoint(cfg.Name, tokenCount, apiKeyCount)
+	m.keyManager.InitEndpoint(cfgKey, tokenCount, apiKeyCount)
 
 	// 使用写锁添加端点
 	m.endpointsMu.Lock()
@@ -107,6 +109,7 @@ func (m *Manager) AddEndpoint(cfg config.EndpointConfig) error {
 			Priority: events.PriorityHigh,
 			Data: map[string]interface{}{
 				"name":      cfg.Name,
+				"key":       cfgKey,
 				"url":       cfg.URL,
 				"priority":  cfg.Priority,
 				"timestamp": time.Now().Format("2006-01-02 15:04:05"),
@@ -120,21 +123,37 @@ func (m *Manager) AddEndpoint(cfg config.EndpointConfig) error {
 
 // RemoveEndpoint 动态移除端点（v5.0+ 新增）
 // 线程安全地从管理器中移除端点
-func (m *Manager) RemoveEndpoint(name string) error {
+func (m *Manager) RemoveEndpoint(endpointKey string) error {
 	m.endpointsMu.Lock()
 	defer m.endpointsMu.Unlock()
 
 	// 查找并移除端点
 	index := -1
 	for i, ep := range m.endpoints {
-		if ep.Config.Name == name {
+		if endpointKeyFromConfig(ep.Config) == endpointKey {
 			index = i
 			break
 		}
 	}
+	// 兼容：旧调用方仅传 name（当且仅当全局唯一时允许回退）
+	if index == -1 && endpointKey != "" && !strings.Contains(endpointKey, endpointKeySeparator) {
+		for i, ep := range m.endpoints {
+			if ep.Config.Name != endpointKey {
+				continue
+			}
+			if index != -1 {
+				index = -1
+				break
+			}
+			index = i
+		}
+		if index != -1 {
+			endpointKey = endpointKeyFromConfig(m.endpoints[index].Config)
+		}
+	}
 
 	if index == -1 {
-		return fmt.Errorf("端点 '%s' 未找到", name)
+		return fmt.Errorf("端点 '%s' 未找到", endpointKey)
 	}
 
 	// 移除端点（保持切片顺序）
@@ -142,7 +161,7 @@ func (m *Manager) RemoveEndpoint(name string) error {
 	m.endpoints = append(m.endpoints[:index], m.endpoints[index+1:]...)
 
 	// 清理 KeyManager 状态
-	m.keyManager.RemoveEndpoint(name)
+	m.keyManager.RemoveEndpoint(endpointKey)
 
 	// 更新 GroupManager（在锁内创建快照）
 	snapshot := make([]*Endpoint, len(m.endpoints))
@@ -160,36 +179,69 @@ func (m *Manager) RemoveEndpoint(name string) error {
 			Source:   "endpoint_manager",
 			Priority: events.PriorityHigh,
 			Data: map[string]interface{}{
-				"name":      name,
+				"name":      removedEndpoint.Config.Name,
+				"key":       endpointKey,
 				"url":       removedEndpoint.Config.URL,
 				"timestamp": time.Now().Format("2006-01-02 15:04:05"),
 			},
 		})
 	}
 
-	slog.Info(fmt.Sprintf("➖ [端点管理] 移除端点: %s", name))
+	slog.Info(fmt.Sprintf("➖ [端点管理] 移除端点: %s", endpointKey))
 	return nil
 }
 
 // UpdateEndpointConfig 更新端点配置（v5.0+ 新增）
-// 更新现有端点的配置（不包括名称）
-func (m *Manager) UpdateEndpointConfig(name string, cfg config.EndpointConfig) error {
+// 参数 oldEndpointKey 用于定位要更新的端点；cfg 可包含新的 name/channel（支持端点改名/移动渠道）。
+func (m *Manager) UpdateEndpointConfig(oldEndpointKey string, cfg config.EndpointConfig) error {
 	m.endpointsMu.RLock()
 	var targetEndpoint *Endpoint
 	for _, ep := range m.endpoints {
-		if ep.Config.Name == name {
+		if endpointKeyFromConfig(ep.Config) == oldEndpointKey {
 			targetEndpoint = ep
 			break
+		}
+	}
+	// 兼容：旧调用方仅传 name（当且仅当全局唯一时允许回退）
+	if targetEndpoint == nil && oldEndpointKey != "" && !strings.Contains(oldEndpointKey, endpointKeySeparator) {
+		for _, ep := range m.endpoints {
+			if ep.Config.Name != oldEndpointKey {
+				continue
+			}
+			if targetEndpoint != nil {
+				targetEndpoint = nil
+				break
+			}
+			targetEndpoint = ep
+		}
+		if targetEndpoint != nil {
+			oldEndpointKey = endpointKeyFromConfig(targetEndpoint.Config)
 		}
 	}
 	m.endpointsMu.RUnlock()
 
 	if targetEndpoint == nil {
-		return fmt.Errorf("端点 '%s' 未找到", name)
+		return fmt.Errorf("端点 '%s' 未找到", oldEndpointKey)
 	}
 
-	// 保留原名称
-	cfg.Name = name
+	newEndpointKey := endpointKeyFromConfig(cfg)
+	if newEndpointKey == "" {
+		return fmt.Errorf("端点标识不能为空")
+	}
+	if newEndpointKey != oldEndpointKey {
+		// 防止更新后与其他端点冲突
+		m.endpointsMu.RLock()
+		for _, ep := range m.endpoints {
+			if ep == targetEndpoint {
+				continue
+			}
+			if endpointKeyFromConfig(ep.Config) == newEndpointKey {
+				m.endpointsMu.RUnlock()
+				return fmt.Errorf("端点 '%s' 已存在", newEndpointKey)
+			}
+		}
+		m.endpointsMu.RUnlock()
+	}
 
 	// 更新配置
 	targetEndpoint.mutex.Lock()
@@ -205,7 +257,10 @@ func (m *Manager) UpdateEndpointConfig(name string, cfg config.EndpointConfig) e
 	if apiKeyCount == 0 && cfg.ApiKey != "" {
 		apiKeyCount = 1
 	}
-	m.keyManager.UpdateEndpointKeyCount(name, tokenCount, apiKeyCount)
+	if newEndpointKey != oldEndpointKey {
+		m.keyManager.RenameEndpointKey(oldEndpointKey, newEndpointKey)
+	}
+	m.keyManager.UpdateEndpointKeyCount(newEndpointKey, tokenCount, apiKeyCount)
 
 	// 更新 GroupManager
 	m.endpointsMu.RLock()
@@ -224,7 +279,8 @@ func (m *Manager) UpdateEndpointConfig(name string, cfg config.EndpointConfig) e
 			Source:   "endpoint_manager",
 			Priority: events.PriorityHigh,
 			Data: map[string]interface{}{
-				"name":      name,
+				"name":      cfg.Name,
+				"key":       newEndpointKey,
 				"url":       cfg.URL,
 				"priority":  cfg.Priority,
 				"timestamp": time.Now().Format("2006-01-02 15:04:05"),
@@ -232,7 +288,7 @@ func (m *Manager) UpdateEndpointConfig(name string, cfg config.EndpointConfig) e
 		})
 	}
 
-	slog.Info(fmt.Sprintf("✏️ [端点管理] 更新端点配置: %s", name))
+	slog.Info(fmt.Sprintf("✏️ [端点管理] 更新端点配置: %s", newEndpointKey))
 	return nil
 }
 

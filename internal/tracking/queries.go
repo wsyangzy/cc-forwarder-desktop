@@ -8,6 +8,25 @@ import (
 	"time"
 )
 
+func (ut *UsageTracker) formatStartTimeQueryBound(t time.Time) string {
+	if ut != nil && ut.location != nil {
+		t = t.In(ut.location)
+	}
+	return t.Format("2006-01-02 15:04:05")
+}
+
+func (ut *UsageTracker) formatEndTimeQueryBound(t time.Time) string {
+	if ut != nil && ut.location != nil {
+		t = t.In(ut.location)
+	}
+	// DB 中 start_time 可能被写为：
+	// - "YYYY-MM-DD HH:MM:SS"
+	// - "YYYY-MM-DD HH:MM:SS.ffffff"
+	// - "YYYY-MM-DD HH:MM:SS.fffffffff"
+	// 这里统一用一个带小数的“上界”字符串，保证 <= 查询不漏掉带小数的记录。
+	return t.Format("2006-01-02 15:04:05") + ".999999999"
+}
+
 // QueryOptions represents options for querying usage data
 type QueryOptions struct {
 	StartDate    *time.Time
@@ -269,11 +288,11 @@ func (ut *UsageTracker) QueryRequestDetails(ctx context.Context, opts *QueryOpti
 
 	if opts.StartDate != nil {
 		query += " AND start_time >= ?"
-		args = append(args, *opts.StartDate)
+		args = append(args, ut.formatStartTimeQueryBound(*opts.StartDate))
 	}
 	if opts.EndDate != nil {
 		query += " AND start_time <= ?"
-		args = append(args, *opts.EndDate)
+		args = append(args, ut.formatEndTimeQueryBound(*opts.EndDate))
 	}
 	if opts.ModelName != "" {
 		query += " AND model_name = ?"
@@ -413,7 +432,7 @@ func (ut *UsageTracker) QueryUsageStats(ctx context.Context, period string) (*Us
 	var stats UsageStats
 	stats.Period = period
 
-	err := ut.readDB.QueryRowContext(ctx, query, startDate, endDate).Scan(
+	err := ut.readDB.QueryRowContext(ctx, query, ut.formatStartTimeQueryBound(startDate), ut.formatEndTimeQueryBound(endDate)).Scan(
 		&stats.TotalRequests,
 		&stats.SuccessRate,
 		&stats.AvgDuration,
@@ -456,11 +475,11 @@ func (ut *UsageTracker) QueryUsageStatsTotals(ctx context.Context, opts *QueryOp
 	if opts != nil {
 		if opts.StartDate != nil {
 			query += " AND start_time >= ?"
-			args = append(args, *opts.StartDate)
+			args = append(args, ut.formatStartTimeQueryBound(*opts.StartDate))
 		}
 		if opts.EndDate != nil {
 			query += " AND start_time <= ?"
-			args = append(args, *opts.EndDate)
+			args = append(args, ut.formatEndTimeQueryBound(*opts.EndDate))
 		}
 		if opts.ModelName != "" {
 			query += " AND model_name = ?"
@@ -554,11 +573,11 @@ func (ut *UsageTracker) CountRequestDetails(ctx context.Context, opts *QueryOpti
 
 	if opts.StartDate != nil {
 		query += " AND start_time >= ?"
-		args = append(args, *opts.StartDate)
+		args = append(args, ut.formatStartTimeQueryBound(*opts.StartDate))
 	}
 	if opts.EndDate != nil {
 		query += " AND start_time <= ?"
-		args = append(args, *opts.EndDate)
+		args = append(args, ut.formatEndTimeQueryBound(*opts.EndDate))
 	}
 	if opts.ModelName != "" {
 		query += " AND model_name = ?"
@@ -616,8 +635,11 @@ func (ut *UsageTracker) GetEndpointCostsForDate(ctx context.Context, date string
 		return nil, fmt.Errorf("failed to parse date: %w", err)
 	}
 
-	// Use local timezone for the date range
+	// Use configured timezone for the date range
 	location := time.Local
+	if ut != nil && ut.location != nil {
+		location = ut.location
+	}
 	startOfDay := time.Date(startTime.Year(), startTime.Month(), startTime.Day(), 0, 0, 0, 0, location)
 	endOfDay := time.Date(startTime.Year(), startTime.Month(), startTime.Day(), 23, 59, 59, 999999999, location)
 
@@ -641,7 +663,7 @@ func (ut *UsageTracker) GetEndpointCostsForDate(ctx context.Context, date string
 		GROUP BY endpoint_name, group_name
 		ORDER BY total_cost_usd DESC`
 
-	rows, err := ut.readDB.QueryContext(ctx, query, startOfDay, endOfDay)
+	rows, err := ut.readDB.QueryContext(ctx, query, ut.formatStartTimeQueryBound(startOfDay), ut.formatEndTimeQueryBound(endOfDay))
 	if err != nil {
 		slog.Error("Failed to query endpoint costs", "error", err, "date", date, "start_time", startOfDay, "end_time", endOfDay)
 		return nil, fmt.Errorf("failed to query endpoint costs for date %s: %w", date, err)

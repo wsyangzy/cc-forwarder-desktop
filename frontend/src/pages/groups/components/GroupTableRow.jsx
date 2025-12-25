@@ -95,7 +95,7 @@ const GroupTableRow = ({ group, onActivate, onPause, loading, channelFailoverEna
               onClick={() => onPause(group.name)}
               disabled={loading || !channelFailoverEnabled}
               title={!channelFailoverEnabled ? '已关闭渠道间故障转移：不可暂停渠道' : undefined}
-              className="px-3 py-1.5 text-xs font-medium bg-white border border-gray-200 text-rose-600 rounded-lg hover:bg-rose-50 hover:border-rose-200 transition-colors flex items-center gap-1 shadow-sm disabled:opacity-50"
+              className="px-3 py-1.5 text-xs font-medium bg-rose-600 text-white rounded-lg hover:bg-rose-700 transition-colors flex items-center gap-1 shadow-sm disabled:opacity-50"
             >
               <Pause className="w-3.5 h-3.5" /> 暂停
             </button>

@@ -1,0 +1,525 @@
+//go:build windows
+
+package tray
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"runtime"
+	"sync"
+	"sync/atomic"
+	"syscall"
+	"time"
+	"unsafe"
+
+	"golang.org/x/sys/windows"
+)
+
+const (
+	// 重要：Shell_NotifyIcon 的回调消息建议使用 WM_USER~0x7FFF 范围。
+	// 这里避免与 NIN_SELECT(0x0400)/NIN_KEYSELECT(0x0401) 冲突，选择一个偏移量更大的值。
+	trayCallbackMessage = 0x0400 + 100 // WM_USER + 100
+
+	nimAdd       = 0x00000000
+	nimModify    = 0x00000001
+	nimDelete    = 0x00000002
+	nimSetVerion = 0x00000004
+
+	nifMessage = 0x00000001
+	nifIcon    = 0x00000002
+	nifTip     = 0x00000004
+	// Windows Vista+：显式要求显示 tooltip（部分环境否则不显示）
+	nifShowTip = 0x00000080
+
+	notifyIconVersion4 = 4
+
+	wmDestroy       = 0x0002
+	wmClose         = 0x0010
+	wmCommand       = 0x0111
+	wmContextMenu   = 0x007B
+	wmLButtonUp     = 0x0202
+	wmLButtonDblClk = 0x0203
+	wmRButtonUp     = 0x0205
+
+	// NOTIFYICON_VERSION_4 之后，左键“选择”会更倾向发送 NIN_SELECT / NIN_KEYSELECT
+	// 而不是传统的 WM_LBUTTONUP / WM_LBUTTONDBLCLK。
+	ninSelect    = 0x0400 // WM_USER + 0
+	ninKeySelect = 0x0401 // WM_USER + 1
+
+	imageIcon      = 1
+	lrLoadFromFile = 0x0010
+	lrDefaultSize  = 0x0040
+
+	mfString    = 0x0000
+	mfSeparator = 0x0800
+
+	tpmRightButton = 0x0002
+	tpmReturnCmd   = 0x0100
+)
+
+const (
+	menuShow = 1001
+	menuHide = 1002
+	menuQuit = 1003
+)
+
+type point struct {
+	X int32
+	Y int32
+}
+
+type msg struct {
+	Hwnd    windows.Handle
+	Message uint32
+	WParam  uintptr
+	LParam  uintptr
+	Time    uint32
+	Pt      point
+}
+
+// NOTIFYICONDATAW (简化：包含常用字段；cbSize 按实际大小设置)
+// https://learn.microsoft.com/windows/win32/api/shellapi/ns-shellapi-notifyicondataw
+type notifyIconData struct {
+	CbSize           uint32
+	HWnd             windows.Handle
+	UID              uint32
+	UFlags           uint32
+	UCallbackMessage uint32
+	HIcon            windows.Handle
+	SzTip            [128]uint16
+	DwState          uint32
+	DwStateMask      uint32
+	SzInfo           [256]uint16
+	UTimeoutOrVer    uint32
+	SzInfoTitle      [64]uint16
+	DwInfoFlags      uint32
+	GuidItem         windows.GUID
+	HBalloonIcon     windows.Handle
+}
+
+var (
+	modKernel32 = windows.NewLazySystemDLL("kernel32.dll")
+	modShell32 = windows.NewLazySystemDLL("shell32.dll")
+	modUser32  = windows.NewLazySystemDLL("user32.dll")
+
+	procGetModuleHandleW = modKernel32.NewProc("GetModuleHandleW")
+	procShellNotifyIconW = modShell32.NewProc("Shell_NotifyIconW")
+
+	procLoadImageW       = modUser32.NewProc("LoadImageW")
+	procDestroyIcon      = modUser32.NewProc("DestroyIcon")
+	procCreatePopupMenu  = modUser32.NewProc("CreatePopupMenu")
+	procAppendMenuW      = modUser32.NewProc("AppendMenuW")
+	procTrackPopupMenu   = modUser32.NewProc("TrackPopupMenu")
+	procDestroyMenu      = modUser32.NewProc("DestroyMenu")
+	procGetCursorPos     = modUser32.NewProc("GetCursorPos")
+	procSetForegroundWnd = modUser32.NewProc("SetForegroundWindow")
+	procDefWindowProcW   = modUser32.NewProc("DefWindowProcW")
+	procRegisterClassExW = modUser32.NewProc("RegisterClassExW")
+	procCreateWindowExW  = modUser32.NewProc("CreateWindowExW")
+	procGetMessageW      = modUser32.NewProc("GetMessageW")
+	procTranslateMessage = modUser32.NewProc("TranslateMessage")
+	procDispatchMessageW = modUser32.NewProc("DispatchMessageW")
+	procPostMessageW     = modUser32.NewProc("PostMessageW")
+	procPostQuitMessage  = modUser32.NewProc("PostQuitMessage")
+)
+
+type windowsTray struct {
+	ctx  context.Context
+	opts Options
+
+	hwnd windows.Handle
+	nid  notifyIconData
+
+	iconHandle windows.Handle
+
+	startOnce sync.Once
+	stopOnce  sync.Once
+
+	readyCh chan error
+	doneCh  chan struct{}
+
+	started atomic.Bool
+}
+
+type windowsTrayController struct {
+	t *windowsTray
+}
+
+func (c *windowsTrayController) Stop() {
+	if c == nil || c.t == nil {
+		return
+	}
+	c.t.stop()
+}
+
+var trayWndProc = windows.NewCallback(func(hwnd uintptr, msg uint32, wParam uintptr, lParam uintptr) uintptr {
+	return trayWndProcImpl(windows.Handle(hwnd), msg, wParam, lParam)
+})
+
+var trayRegistry sync.Map // windows.Handle -> *windowsTray
+
+func trayWndProcImpl(hwnd windows.Handle, message uint32, wParam uintptr, lParam uintptr) uintptr {
+	v, ok := trayRegistry.Load(hwnd)
+	if !ok {
+		return defWindowProc(hwnd, message, wParam, lParam)
+	}
+	t := v.(*windowsTray)
+
+	switch message {
+	case trayCallbackMessage:
+		switch uint32(lParam) {
+		case wmLButtonDblClk, wmLButtonUp, ninSelect, ninKeySelect:
+			if t.opts.OnShow != nil {
+				go t.opts.OnShow()
+			}
+			return 0
+		case wmRButtonUp, wmContextMenu:
+			t.showContextMenu()
+			return 0
+		}
+	case wmCommand:
+		// 兼容极端情况：若 TrackPopupMenu 走 WM_COMMAND
+		cmd := uint32(wParam & 0xffff)
+		t.handleMenuCommand(cmd)
+		return 0
+	case wmClose:
+		t.cleanup()
+		postQuitMessage(0)
+		return 0
+	case wmDestroy:
+		t.cleanup()
+		postQuitMessage(0)
+		return 0
+	}
+
+	return defWindowProc(hwnd, message, wParam, lParam)
+}
+
+func start(ctx context.Context, opts Options) (Controller, error) {
+	t := &windowsTray{
+		ctx:     ctx,
+		opts:    opts,
+		readyCh: make(chan error, 1),
+		doneCh:  make(chan struct{}),
+	}
+
+	go t.run()
+
+	select {
+	case err := <-t.readyCh:
+		if err != nil {
+			return nil, err
+		}
+		return &windowsTrayController{t: t}, nil
+	case <-time.After(3 * time.Second):
+		return nil, fmt.Errorf("启动托盘超时")
+	}
+}
+
+func (t *windowsTray) run() {
+	t.startOnce.Do(func() {
+		runtime.LockOSThread()
+		defer runtime.UnlockOSThread()
+
+		if len(t.opts.Icon) == 0 {
+			t.readyCh <- fmt.Errorf("托盘图标为空")
+			return
+		}
+
+		iconHandle, err := loadIconFromBytes(t.opts.Icon)
+		if err != nil {
+			t.readyCh <- err
+			return
+		}
+		t.iconHandle = iconHandle
+
+		hwnd, err := createMessageWindow()
+		if err != nil {
+			t.destroyIcon()
+			t.readyCh <- err
+			return
+		}
+		t.hwnd = hwnd
+		trayRegistry.Store(hwnd, t)
+
+		if err := t.addNotifyIcon(); err != nil {
+			trayRegistry.Delete(hwnd)
+			t.destroyIcon()
+			t.readyCh <- err
+			return
+		}
+
+		t.started.Store(true)
+		t.readyCh <- nil
+		defer func() {
+			t.cleanup()
+			close(t.doneCh)
+		}()
+
+		// 消息循环
+		var m msg
+		for {
+			ret, _, _ := procGetMessageW.Call(uintptr(unsafe.Pointer(&m)), 0, 0, 0)
+			if int32(ret) == 0 || int32(ret) == -1 {
+				break
+			}
+			procTranslateMessage.Call(uintptr(unsafe.Pointer(&m)))
+			procDispatchMessageW.Call(uintptr(unsafe.Pointer(&m)))
+		}
+	})
+}
+
+func (t *windowsTray) stop() {
+	t.stopOnce.Do(func() {
+		if t.hwnd != 0 {
+			procPostMessageW.Call(uintptr(t.hwnd), wmClose, 0, 0)
+		}
+		<-t.doneCh
+	})
+}
+
+func (t *windowsTray) destroyIcon() {
+	if t.iconHandle == 0 {
+		return
+	}
+	procDestroyIcon.Call(uintptr(t.iconHandle))
+	t.iconHandle = 0
+}
+
+func (t *windowsTray) cleanup() {
+	if !t.started.Load() {
+		return
+	}
+	t.started.Store(false)
+	trayRegistry.Delete(t.hwnd)
+
+	_ = shellNotifyIcon(nimDelete, &t.nid)
+	t.destroyIcon()
+}
+
+func (t *windowsTray) addNotifyIcon() error {
+	var nid notifyIconData
+	nid.CbSize = uint32(unsafe.Sizeof(nid))
+	nid.HWnd = t.hwnd
+	nid.UID = 1
+	nid.UFlags = nifMessage | nifIcon | nifTip | nifShowTip
+	nid.UCallbackMessage = trayCallbackMessage
+	nid.HIcon = t.iconHandle
+	copy(nid.SzTip[:], windows.StringToUTF16(t.tooltip()))
+	nid.SzTip[len(nid.SzTip)-1] = 0
+	t.nid = nid
+
+	if err := shellNotifyIcon(nimAdd, &t.nid); err != nil {
+		return err
+	}
+
+	// 设置版本，启用更完整的鼠标事件
+	t.nid.UTimeoutOrVer = notifyIconVersion4
+	return shellNotifyIcon(nimSetVerion, &t.nid)
+}
+
+func (t *windowsTray) tooltip() string {
+	if t.opts.Tooltip != "" {
+		return t.opts.Tooltip
+	}
+	return "CC-Forwarder"
+}
+
+func (t *windowsTray) showContextMenu() {
+	hmenu, _, _ := procCreatePopupMenu.Call()
+	if hmenu == 0 {
+		return
+	}
+	defer procDestroyMenu.Call(hmenu)
+
+	appendMenu(hmenu, mfString, menuShow, "显示主窗口")
+	appendMenu(hmenu, mfString, menuHide, "隐藏主窗口")
+	appendMenu(hmenu, mfSeparator, 0, "")
+	appendMenu(hmenu, mfString, menuQuit, "退出")
+
+	var pt point
+	procGetCursorPos.Call(uintptr(unsafe.Pointer(&pt)))
+	procSetForegroundWnd.Call(uintptr(t.hwnd))
+
+	cmd, _, _ := procTrackPopupMenu.Call(
+		hmenu,
+		tpmRightButton|tpmReturnCmd,
+		uintptr(pt.X),
+		uintptr(pt.Y),
+		0,
+		uintptr(t.hwnd),
+		0,
+	)
+
+	if cmd == 0 {
+		return
+	}
+	t.handleMenuCommand(uint32(cmd))
+}
+
+func (t *windowsTray) handleMenuCommand(cmd uint32) {
+	switch cmd {
+	case menuShow:
+		if t.opts.OnShow != nil {
+			go t.opts.OnShow()
+		}
+	case menuHide:
+		if t.opts.OnHide != nil {
+			go t.opts.OnHide()
+		}
+	case menuQuit:
+		if t.opts.OnQuit != nil {
+			go t.opts.OnQuit()
+		}
+	}
+}
+
+func shellNotifyIcon(message uint32, nid *notifyIconData) error {
+	r, _, err := procShellNotifyIconW.Call(uintptr(message), uintptr(unsafe.Pointer(nid)))
+	if r == 0 {
+		if err != nil && err != syscall.Errno(0) {
+			return err
+		}
+		return fmt.Errorf("Shell_NotifyIconW failed")
+	}
+	return nil
+}
+
+func appendMenu(hmenu uintptr, flags uint32, id uint32, label string) {
+	var textPtr uintptr
+	if label != "" {
+		textPtr = uintptr(unsafe.Pointer(windows.StringToUTF16Ptr(label)))
+	}
+	procAppendMenuW.Call(hmenu, uintptr(flags), uintptr(id), textPtr)
+}
+
+func postQuitMessage(exitCode int32) {
+	procPostQuitMessage.Call(uintptr(exitCode))
+}
+
+func defWindowProc(hwnd windows.Handle, msg uint32, wParam, lParam uintptr) uintptr {
+	ret, _, _ := procDefWindowProcW.Call(uintptr(hwnd), uintptr(msg), wParam, lParam)
+	return ret
+}
+
+func createMessageWindow() (windows.Handle, error) {
+	className, _ := windows.UTF16PtrFromString("CCForwarderTrayWindow")
+
+	hInstancePtr, _, _ := procGetModuleHandleW.Call(0)
+	if hInstancePtr == 0 {
+		return 0, fmt.Errorf("GetModuleHandleW failed")
+	}
+	hInstance := windows.Handle(hInstancePtr)
+
+	type wndClassEx struct {
+		CbSize        uint32
+		Style         uint32
+		LpfnWndProc   uintptr
+		CbClsExtra    int32
+		CbWndExtra    int32
+		HInstance     windows.Handle
+		HIcon         windows.Handle
+		HCursor       windows.Handle
+		HbrBackground windows.Handle
+		LpszMenuName  *uint16
+		LpszClassName *uint16
+		HIconSm       windows.Handle
+	}
+
+	var wc wndClassEx
+	wc.CbSize = uint32(unsafe.Sizeof(wc))
+	wc.LpfnWndProc = trayWndProc
+	wc.LpszClassName = className
+	wc.HInstance = hInstance
+
+	atom, _, regErr := procRegisterClassExW.Call(uintptr(unsafe.Pointer(&wc)))
+	if atom == 0 {
+		// 已注册则忽略
+		if regErr != nil && regErr != syscall.Errno(0) {
+			var errno syscall.Errno
+			if errorsAs(regErr, &errno) && errno != 1410 { // ERROR_CLASS_ALREADY_EXISTS
+				return 0, regErr
+			}
+		}
+	}
+
+	hwnd, _, createErr := procCreateWindowExW.Call(
+		0,
+		uintptr(unsafe.Pointer(className)),
+		uintptr(unsafe.Pointer(className)),
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		uintptr(hInstance),
+		0,
+	)
+	if hwnd == 0 {
+		if createErr != nil && createErr != syscall.Errno(0) {
+			return 0, createErr
+		}
+		return 0, fmt.Errorf("CreateWindowExW failed")
+	}
+	return windows.Handle(hwnd), nil
+}
+
+func loadIconFromBytes(data []byte) (windows.Handle, error) {
+	f, err := os.CreateTemp("", "cc-forwarder-tray-*.ico")
+	if err != nil {
+		return 0, err
+	}
+	path := f.Name()
+	defer func() {
+		_ = f.Close()
+		_ = os.Remove(path)
+	}()
+
+	if _, err := f.Write(data); err != nil {
+		return 0, err
+	}
+	if err := f.Close(); err != nil {
+		return 0, err
+	}
+
+	pathPtr, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return 0, err
+	}
+
+	h, _, callErr := procLoadImageW.Call(
+		0,
+		uintptr(unsafe.Pointer(pathPtr)),
+		imageIcon,
+		0,
+		0,
+		lrLoadFromFile|lrDefaultSize,
+	)
+	if h == 0 {
+		if callErr != nil && callErr != syscall.Errno(0) {
+			return 0, callErr
+		}
+		return 0, fmt.Errorf("加载托盘图标失败")
+	}
+
+	return windows.Handle(h), nil
+}
+
+// errorsAs: 避免引入额外依赖（errors 包）造成 Windows build tag 额外噪声
+func errorsAs(err error, target *syscall.Errno) bool {
+	if err == nil || target == nil {
+		return false
+	}
+	if e, ok := err.(syscall.Errno); ok {
+		*target = e
+		return true
+	}
+	type unwrapper interface{ Unwrap() error }
+	if u, ok := err.(unwrapper); ok {
+		return errorsAs(u.Unwrap(), target)
+	}
+	return false
+}

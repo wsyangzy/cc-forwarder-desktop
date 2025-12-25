@@ -392,7 +392,12 @@ func (am *ArchiveManager) calculateCostV2(req *ActiveRequest) CostBreakdown {
 	// 获取端点倍率
 	var multiplier *EndpointMultiplier
 	if am.endpointMu != nil {
-		if m, ok := am.endpointMu[req.EndpointName]; ok {
+		if key := endpointMultiplierKey(req.Channel, req.GroupName, req.EndpointName); key != "" {
+			if m, ok := am.endpointMu[key]; ok {
+				multiplier = &m
+			}
+		} else if m, ok := am.endpointMu[req.EndpointName]; ok {
+			// 兼容旧 key：endpointName 作为唯一键
 			multiplier = &m
 		}
 	}

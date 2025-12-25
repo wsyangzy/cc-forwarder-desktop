@@ -3,7 +3,7 @@
 // v5.1.0 (2025-12-08)
 // ============================================
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   Settings,
   RefreshCw,
@@ -67,9 +67,19 @@ const SettingsPage = () => {
   const [expandedCategories, setExpandedCategories] = useState(new Set());
 
   const isWails = isWailsEnvironment();
+  const initRetryRef = useRef({ count: 0, timer: null });
+
+  const isRetriableInitError = useCallback((err) => {
+    const msg = (err?.message || String(err || '')).toLowerCase();
+    return msg.includes('设置服务未启用') ||
+      msg.includes('database is locked') ||
+      msg.includes('sqlite_busy') ||
+      msg.includes('context deadline exceeded');
+  }, []);
 
   // 加载设置数据
   const loadSettings = useCallback(async () => {
+    let willRetry = false;
     try {
       setLoading(true);
       setError(null);
@@ -95,17 +105,50 @@ const SettingsPage = () => {
       setSettings(settingsData || []);
       setPortInfo(portData);
       setChanges({});
+      initRetryRef.current.count = 0;
+      if (initRetryRef.current.timer) {
+        clearTimeout(initRetryRef.current.timer);
+        initRetryRef.current.timer = null;
+      }
 
       // 默认展开所有分类
       if (categoriesData && categoriesData.length > 0) {
         setExpandedCategories(new Set(categoriesData.map(c => c.name)));
       }
     } catch (err) {
-      setError(err?.message || String(err) || '加载设置失败');
+      const msg = err?.message || String(err) || '加载设置失败';
+      const maxRetry = 12;
+      const retryDelayMs = 500;
+
+      if (isRetriableInitError(err) && initRetryRef.current.count < maxRetry) {
+        willRetry = true;
+        initRetryRef.current.count += 1;
+        const attempt = initRetryRef.current.count;
+
+        setSaveMessage({ type: 'info', text: `设置服务初始化中，正在重试 (${attempt}/${maxRetry})...` });
+
+        if (initRetryRef.current.timer) {
+          clearTimeout(initRetryRef.current.timer);
+        }
+        initRetryRef.current.timer = setTimeout(() => {
+          loadSettings();
+        }, retryDelayMs);
+      } else {
+        setError(msg);
+      }
     } finally {
-      setLoading(false);
+      if (!willRetry) {
+        setLoading(false);
+      }
     }
-  }, [isWails]);
+  }, [isWails, isRetriableInitError]);
+
+  useEffect(() => () => {
+    if (initRetryRef.current.timer) {
+      clearTimeout(initRetryRef.current.timer);
+      initRetryRef.current.timer = null;
+    }
+  }, []);
 
   useEffect(() => {
     loadSettings();

@@ -14,6 +14,7 @@ import {
   Clock,
   Timer
 } from 'lucide-react';
+import PriorityBadge from './PriorityBadge.jsx';
 
 // ============================================
 // 健康状态徽章
@@ -82,15 +83,18 @@ const CooldownBadge = ({ inCooldown, cooldownUntil, cooldownReason }) => {
 // ============================================
 
 const LatencyBadge = ({ ms }) => {
-  if (!ms || ms === 0) return <span className="text-slate-300 text-xs">-</span>;
+  const msValue = Number(ms);
+  if (!Number.isFinite(msValue) || msValue <= 0) return <span className="text-slate-300 text-xs">-</span>;
+
+  const msInt = Math.max(1, Math.round(msValue));
 
   let colorClass = 'text-emerald-600 bg-emerald-50 border-emerald-100';
-  if (ms > 500) colorClass = 'text-amber-600 bg-amber-50 border-amber-100';
-  if (ms > 1000) colorClass = 'text-rose-600 bg-rose-50 border-rose-100';
+  if (msInt > 500) colorClass = 'text-amber-600 bg-amber-50 border-amber-100';
+  if (msInt > 1000) colorClass = 'text-rose-600 bg-rose-50 border-rose-100';
 
   return (
-    <span className={`font-mono text-xs font-medium px-2 py-0.5 rounded border ${colorClass}`}>
-      {ms}ms
+    <span className={`font-mono text-xs font-medium px-2 py-0.5 rounded border whitespace-nowrap ${colorClass}`}>
+      {msInt}ms
     </span>
   );
 };
@@ -207,9 +211,7 @@ const EndpointRow = ({
 
       {/* 优先级 */}
       <td className="px-6 py-4 text-center">
-        <div className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-slate-50 border border-slate-200 font-bold text-slate-600 text-xs">
-          {endpoint.priority || 1}
-        </div>
+        <PriorityBadge priority={endpoint.priority || 1} size="md" />
       </td>
 
       {/* 高级特性 */}

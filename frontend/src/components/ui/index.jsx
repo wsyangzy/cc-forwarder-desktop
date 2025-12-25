@@ -318,6 +318,7 @@ export const Button = ({
     secondary: 'bg-slate-100 text-slate-600 hover:bg-slate-200',
     success: 'bg-emerald-600 text-white hover:bg-emerald-700',
     danger: 'bg-rose-600 text-white hover:bg-rose-700',
+    dangerSoft: 'bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200',
     ghost: 'bg-transparent text-slate-600 hover:bg-slate-100'
   };
 

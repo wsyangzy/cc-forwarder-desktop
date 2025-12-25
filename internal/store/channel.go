@@ -17,6 +17,8 @@ type ChannelRecord struct {
 	Name     string `json:"name"`
 	Website  string `json:"website,omitempty"`
 	Priority int    `json:"priority"`
+	// FailoverEnabled 表示该渠道是否参与“渠道间故障转移”（暂停/恢复按钮持久化）。
+	FailoverEnabled bool `json:"failover_enabled"`
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
@@ -82,10 +84,10 @@ func (s *SQLiteChannelStore) Create(ctx context.Context, record *ChannelRecord) 
 
 	s.mu.Lock()
 	query := `
-		INSERT INTO channels (name, website, priority)
-		VALUES (?, ?, ?)
+		INSERT INTO channels (name, website, priority, failover_enabled)
+		VALUES (?, ?, ?, ?)
 	`
-	res, err := s.execContext(ctx, query, record.Name, nullIfEmpty(record.Website), record.Priority)
+	res, err := s.execContext(ctx, query, record.Name, nullIfEmpty(record.Website), record.Priority, boolToInt(record.FailoverEnabled))
 	if err != nil {
 		s.mu.Unlock()
 		return nil, fmt.Errorf("创建渠道失败: %w", err)
@@ -106,19 +108,21 @@ func (s *SQLiteChannelStore) Get(ctx context.Context, name string) (*ChannelReco
 	defer s.mu.RUnlock()
 
 	query := `
-		SELECT id, name, COALESCE(website, ''), COALESCE(priority, 1), created_at, updated_at
+		SELECT id, name, COALESCE(website, ''), COALESCE(priority, 1), COALESCE(failover_enabled, 1), created_at, updated_at
 		FROM channels
 		WHERE name = ?
 	`
 
 	var record ChannelRecord
 	var createdAt, updatedAt string
+	var failoverEnabled int
 
 	err := s.queryRowContext(ctx, query, name).Scan(
 		&record.ID,
 		&record.Name,
 		&record.Website,
 		&record.Priority,
+		&failoverEnabled,
 		&createdAt,
 		&updatedAt,
 	)
@@ -131,6 +135,7 @@ func (s *SQLiteChannelStore) Get(ctx context.Context, name string) (*ChannelReco
 
 	record.CreatedAt = parseSQLiteDateTime(createdAt)
 	record.UpdatedAt = parseSQLiteDateTime(updatedAt)
+	record.FailoverEnabled = failoverEnabled != 0
 
 	return &record, nil
 }
@@ -140,7 +145,7 @@ func (s *SQLiteChannelStore) List(ctx context.Context) ([]*ChannelRecord, error)
 	defer s.mu.RUnlock()
 
 	query := `
-		SELECT id, name, COALESCE(website, ''), COALESCE(priority, 1), created_at, updated_at
+		SELECT id, name, COALESCE(website, ''), COALESCE(priority, 1), COALESCE(failover_enabled, 1), created_at, updated_at
 		FROM channels
 		ORDER BY COALESCE(priority, 1) ASC, created_at DESC, name ASC
 	`
@@ -154,11 +159,13 @@ func (s *SQLiteChannelStore) List(ctx context.Context) ([]*ChannelRecord, error)
 	for rows.Next() {
 		var record ChannelRecord
 		var createdAt, updatedAt string
-		if err := rows.Scan(&record.ID, &record.Name, &record.Website, &record.Priority, &createdAt, &updatedAt); err != nil {
+		var failoverEnabled int
+		if err := rows.Scan(&record.ID, &record.Name, &record.Website, &record.Priority, &failoverEnabled, &createdAt, &updatedAt); err != nil {
 			return nil, fmt.Errorf("读取渠道失败: %w", err)
 		}
 		record.CreatedAt = parseSQLiteDateTime(createdAt)
 		record.UpdatedAt = parseSQLiteDateTime(updatedAt)
+		record.FailoverEnabled = failoverEnabled != 0
 		result = append(result, &record)
 	}
 	if err := rows.Err(); err != nil {
@@ -181,8 +188,8 @@ func (s *SQLiteChannelStore) Update(ctx context.Context, record *ChannelRecord) 
 		record.Priority = 1
 	}
 
-	query := `UPDATE channels SET website = ?, priority = ? WHERE name = ?`
-	res, err := s.execContext(ctx, query, nullIfEmpty(record.Website), record.Priority, record.Name)
+	query := `UPDATE channels SET website = ?, priority = ?, failover_enabled = ? WHERE name = ?`
+	res, err := s.execContext(ctx, query, nullIfEmpty(record.Website), record.Priority, boolToInt(record.FailoverEnabled), record.Name)
 	if err != nil {
 		return fmt.Errorf("更新渠道失败: %w", err)
 	}

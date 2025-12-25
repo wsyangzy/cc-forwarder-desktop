@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -230,8 +231,9 @@ func (m *Manager) GetFastestEndpointsWithRealTimeTest(ctx context.Context) []*En
 	return endpoints
 }
 
-// GetEndpointByName returns an endpoint by name, only from active groups
-func (m *Manager) GetEndpointByName(name string) *Endpoint {
+// GetEndpointByName returns an endpoint by key, only from active groups.
+// 兼容：YAML 模式下 key == name。
+func (m *Manager) GetEndpointByName(endpointKey string) *Endpoint {
 	// v5.0+: 使用快照机制
 	m.endpointsMu.RLock()
 	snapshot := make([]*Endpoint, len(m.endpoints))
@@ -243,22 +245,53 @@ func (m *Manager) GetEndpointByName(name string) *Endpoint {
 
 	// Then find by name
 	for _, endpoint := range activeEndpoints {
-		if endpoint.Config.Name == name {
+		if endpointKeyFromConfig(endpoint.Config) == endpointKey {
 			return endpoint
 		}
+	}
+	if endpointKey != "" && !strings.Contains(endpointKey, endpointKeySeparator) {
+		var found *Endpoint
+		for _, endpoint := range activeEndpoints {
+			if endpoint.Config.Name != endpointKey {
+				continue
+			}
+			if found != nil {
+				return nil
+			}
+			found = endpoint
+		}
+		return found
 	}
 	return nil
 }
 
-// GetEndpointByNameAny returns an endpoint by name from all endpoints (ignoring group status)
-func (m *Manager) GetEndpointByNameAny(name string) *Endpoint {
+// GetEndpointByNameAny returns an endpoint by key from all endpoints (ignoring group status)
+// 兼容：YAML 模式下 key == name。
+func (m *Manager) GetEndpointByNameAny(endpointKey string) *Endpoint {
 	m.endpointsMu.RLock()
 	defer m.endpointsMu.RUnlock()
 
+	// 优先按 endpointKey（channel::name）查找
 	for _, endpoint := range m.endpoints {
-		if endpoint.Config.Name == name {
+		if endpointKeyFromConfig(endpoint.Config) == endpointKey {
 			return endpoint
 		}
+	}
+
+	// 兼容：旧调用方仅传 name（当且仅当全局唯一时允许回退）
+	if endpointKey != "" && !strings.Contains(endpointKey, endpointKeySeparator) {
+		var found *Endpoint
+		for _, endpoint := range m.endpoints {
+			if endpoint.Config.Name != endpointKey {
+				continue
+			}
+			if found != nil {
+				// 多渠道同名：回退会产生歧义，直接返回 nil
+				return nil
+			}
+			found = endpoint
+		}
+		return found
 	}
 	return nil
 }
@@ -284,15 +317,33 @@ func (m *Manager) GetEndpoints() []*Endpoint {
 }
 
 // GetEndpointStatus returns the status of an endpoint by name
-func (m *Manager) GetEndpointStatus(name string) EndpointStatus {
+func (m *Manager) GetEndpointStatus(endpointKey string) EndpointStatus {
 	m.endpointsMu.RLock()
 	defer m.endpointsMu.RUnlock()
 
 	for _, ep := range m.endpoints {
-		if ep.Config.Name == name {
+		if endpointKeyFromConfig(ep.Config) == endpointKey {
 			ep.mutex.RLock()
 			status := ep.Status
 			ep.mutex.RUnlock()
+			return status
+		}
+	}
+	if endpointKey != "" && !strings.Contains(endpointKey, endpointKeySeparator) {
+		var found *Endpoint
+		for _, ep := range m.endpoints {
+			if ep.Config.Name != endpointKey {
+				continue
+			}
+			if found != nil {
+				return EndpointStatus{}
+			}
+			found = ep
+		}
+		if found != nil {
+			found.mutex.RLock()
+			status := found.Status
+			found.mutex.RUnlock()
 			return status
 		}
 	}

@@ -27,11 +27,12 @@ type GroupInfo struct {
 
 // GroupManager manages endpoint groups and their cooldown states
 type GroupManager struct {
-	groups           map[string]*GroupInfo
-	config           *config.Config
-	mutex            sync.RWMutex
-	cooldownDuration time.Duration
-	channelPriorities map[string]int
+	groups                 map[string]*GroupInfo
+	config                 *config.Config
+	mutex                  sync.RWMutex
+	cooldownDuration       time.Duration
+	channelPriorities      map[string]int
+	channelFailoverEnabled map[string]bool
 	// Group change notification subscribers
 	groupChangeSubscribers []chan string
 	subscriberMutex        sync.RWMutex
@@ -54,6 +55,7 @@ func NewGroupManager(cfg *config.Config) *GroupManager {
 		config:                 cfg,
 		cooldownDuration:       cooldownDuration,
 		channelPriorities:      make(map[string]int),
+		channelFailoverEnabled: make(map[string]bool),
 		groupChangeSubscribers: make([]chan string, 0),
 	}
 }
@@ -104,6 +106,51 @@ func (gm *GroupManager) UpdateChannelPriorities(priorities map[string]int) {
 			group.Priority = p
 		}
 	}
+}
+
+// UpdateChannelFailoverEnabled 更新“渠道(channel)”是否参与渠道间故障转移的开关映射。
+// 该开关用于前端“暂停/恢复”按钮的持久化状态，并影响：
+// - 跨渠道故障转移的候选筛选（跳过暂停渠道）
+// - 定时健康检查/延迟检测的覆盖范围
+func (gm *GroupManager) UpdateChannelFailoverEnabled(enabled map[string]bool) {
+	gm.mutex.Lock()
+	defer gm.mutex.Unlock()
+
+	next := make(map[string]bool, len(enabled))
+	for name, v := range enabled {
+		if name == "" {
+			continue
+		}
+		next[name] = v
+	}
+	gm.channelFailoverEnabled = next
+
+	// 同步到已存在的组（尽最大努力即时生效）
+	for name, group := range gm.groups {
+		if group == nil {
+			continue
+		}
+		if v, ok := gm.channelFailoverEnabled[name]; ok && !v {
+			group.ManuallyPaused = true
+		} else {
+			group.ManuallyPaused = false
+		}
+	}
+}
+
+// IsChannelFailoverEnabled 查询“渠道是否参与渠道间故障转移”。
+// 默认值为 true（未配置时视为参与）。
+func (gm *GroupManager) IsChannelFailoverEnabled(channel string) bool {
+	gm.mutex.RLock()
+	defer gm.mutex.RUnlock()
+	if channel == "" {
+		return true
+	}
+	v, ok := gm.channelFailoverEnabled[channel]
+	if !ok {
+		return true
+	}
+	return v
 }
 
 // UpdateGroups rebuilds group information from endpoints
@@ -165,22 +212,6 @@ func (gm *GroupManager) UpdateGroups(endpoints []*Endpoint) {
 		}
 	}
 
-	// 组级暂停：当且仅当组内所有端点都 failover_enabled=false 时，暂停该组（渠道）
-	for _, group := range newGroups {
-		allDisabled := true
-		for _, ep := range group.Endpoints {
-			failoverEnabled := true
-			if ep.Config.FailoverEnabled != nil {
-				failoverEnabled = *ep.Config.FailoverEnabled
-			}
-			if failoverEnabled {
-				allDisabled = false
-				break
-			}
-		}
-		group.ManuallyPaused = allDisabled
-	}
-
 	// v6.1.0: 渠道优先级优先于端点优先级（仅用于渠道间选择顺序）
 	for name, group := range newGroups {
 		if group == nil {
@@ -192,6 +223,40 @@ func (gm *GroupManager) UpdateGroups(endpoints []*Endpoint) {
 		}
 		if group.Priority <= 0 {
 			group.Priority = 1
+		}
+	}
+
+	// 渠道级暂停（持久化）：由 channels.failover_enabled 控制
+	for name, group := range newGroups {
+		if group == nil {
+			continue
+		}
+		if v, ok := gm.channelFailoverEnabled[name]; ok && !v {
+			group.ManuallyPaused = true
+		} else {
+			group.ManuallyPaused = false
+		}
+	}
+
+	// 端点级兜底：当且仅当组内所有端点都 failover_enabled=false 时，该组无法参与跨渠道故障转移。
+	// 为保持旧行为/测试预期，这种情况下也视为“暂停”（不会落库，只是运行时派生）。
+	for _, group := range newGroups {
+		if group == nil {
+			continue
+		}
+		allDisabled := true
+		for _, ep := range group.Endpoints {
+			failoverEnabled := true
+			if ep != nil && ep.Config.FailoverEnabled != nil {
+				failoverEnabled = *ep.Config.FailoverEnabled
+			}
+			if failoverEnabled {
+				allDisabled = false
+				break
+			}
+		}
+		if allDisabled {
+			group.ManuallyPaused = true
 		}
 	}
 
@@ -573,7 +638,6 @@ func (gm *GroupManager) ManualActivateGroupWithForce(groupName string, force boo
 	// 停用所有组
 	for _, group := range gm.groups {
 		group.IsActive = false
-		group.ManuallyPaused = false
 	}
 
 	// 激活目标组
@@ -616,26 +680,18 @@ func (gm *GroupManager) ManualPauseGroup(groupName string, duration time.Duratio
 		return fmt.Errorf("组不存在: %s", groupName)
 	}
 
-	// v6.0: 当关闭“渠道间故障转移”时，不允许暂停当前活跃组，否则会导致无活跃组、请求全部失败。
-	if targetGroup.IsActive && !gm.config.Failover.Enabled {
-		return fmt.Errorf("已关闭渠道间故障转移，无法暂停当前活跃渠道（否则将无可用渠道）")
-	}
-
 	// Pause the group
 	targetGroup.ManuallyPaused = true
-	var switchedToGroup string
-	if targetGroup.IsActive {
+	gm.channelFailoverEnabled[groupName] = false
+
+	// 非 SQLite 模式下，“暂停渠道”应立即让其退出活跃状态，避免继续被选中。
+	// SQLite 模式下活跃状态由 enabled 字段/显式激活控制，这里不强制切换。
+	isSQLiteMode := gm.config.EndpointsStorage.Type == "sqlite"
+	if !isSQLiteMode && targetGroup.IsActive {
 		targetGroup.IsActive = false
-		// Find next available group to activate
-		gm.updateActiveGroups()
-		// Check which group became active after pausing
-		for _, g := range gm.getSortedGroups() {
-			if g.IsActive {
-				switchedToGroup = g.Name
-				break
-			}
-		}
 	}
+	// 重新评估活跃组（非 SQLite 模式下可即时切换到其他可用渠道）
+	gm.updateActiveGroups()
 
 	if duration > 0 {
 		// Set a timer to automatically unpause
@@ -645,6 +701,7 @@ func (gm *GroupManager) ManualPauseGroup(groupName string, duration time.Duratio
 			defer gm.mutex.Unlock()
 			if targetGroup.ManuallyPaused {
 				targetGroup.ManuallyPaused = false
+				gm.channelFailoverEnabled[groupName] = true
 				// Store previous state to check for changes
 				prevActiveGroups := make(map[string]bool)
 				for _, g := range gm.groups {
@@ -666,12 +723,6 @@ func (gm *GroupManager) ManualPauseGroup(groupName string, duration time.Duratio
 		slog.Info(fmt.Sprintf("⏸️ [手动暂停] 组 %s 已暂停，需要手动恢复", groupName))
 	}
 
-	// Notify about group switch if another group became active
-	if switchedToGroup != "" {
-		gm.notifyGroupChange(switchedToGroup)
-		slog.Debug(fmt.Sprintf("📡 [组通知] 因暂停组 %s 而切换到组 %s", groupName, switchedToGroup))
-	}
-
 	return nil
 }
 
@@ -690,6 +741,7 @@ func (gm *GroupManager) ManualResumeGroup(groupName string) error {
 	}
 
 	targetGroup.ManuallyPaused = false
+	gm.channelFailoverEnabled[groupName] = true
 
 	// Store previous active groups to detect changes
 	prevActiveGroups := make(map[string]bool)

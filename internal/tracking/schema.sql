@@ -128,7 +128,7 @@ CREATE TABLE IF NOT EXISTS endpoints (
 
     -- ========== 基本信息 ==========
     channel TEXT NOT NULL,                          -- 渠道标签（用于分组展示）
-    name TEXT UNIQUE NOT NULL,                      -- 端点唯一名称
+    name TEXT NOT NULL,                             -- 端点名称（同一渠道内唯一）
     url TEXT NOT NULL,                              -- 端点 URL
 
     -- ========== 认证配置 ==========
@@ -158,7 +158,10 @@ CREATE TABLE IF NOT EXISTS endpoints (
 
     -- ========== 审计字段 ==========
     created_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00'),
-    updated_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00')
+    updated_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00'),
+
+    -- 约束：允许不同渠道同名端点，但同一渠道内名称必须唯一
+    UNIQUE(channel, name)
 );
 
 -- 端点表索引
@@ -186,6 +189,7 @@ CREATE TABLE IF NOT EXISTS channels (
     name TEXT UNIQUE NOT NULL,                      -- 渠道名称
     website TEXT,                                   -- 渠道官网（可选）
     priority INTEGER DEFAULT 1,                     -- 渠道优先级（数字越小越高，用于渠道间故障转移顺序）
+    failover_enabled INTEGER DEFAULT 1,             -- 是否参与渠道间故障转移 (1=是, 0=否)
 
     created_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00'),
     updated_at DATETIME DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') || '+08:00')

@@ -52,6 +52,8 @@ func (a *App) GetEndpoints() []EndpointInfo {
 	}
 
 	for _, ep := range endpoints {
+		status := ep.GetStatus()
+
 		// v6.0: 路由组 = 渠道(channel)，未配置 channel 则回退为端点名（兼容旧逻辑）
 		routeGroup := ep.Config.Channel
 		if routeGroup == "" {
@@ -64,17 +66,17 @@ func (a *App) GetEndpoints() []EndpointInfo {
 			Channel:         ep.Config.Channel, // v5.0: 渠道标签
 			Group:           routeGroup,
 			Priority:        ep.Config.Priority,
-			Healthy:         ep.Status.Healthy,
-			ConsecutiveFail: ep.Status.ConsecutiveFails,
-			ResponseTimeMs:  float64(ep.Status.ResponseTime.Milliseconds()),
+			Healthy:         status.Healthy,
+			ConsecutiveFail: status.ConsecutiveFails,
+			ResponseTimeMs:  float64(status.ResponseTime) / float64(time.Millisecond),
 		}
 
 		// 获取组是否激活
 		info.GroupIsActive = groupActiveMap[routeGroup]
 		info.GroupPriority = groupPriorityMap[routeGroup]
 
-		if !ep.Status.LastCheck.IsZero() {
-			info.LastCheck = ep.Status.LastCheck.Format(time.RFC3339)
+		if !status.LastCheck.IsZero() {
+			info.LastCheck = status.LastCheck.Format(time.RFC3339)
 		}
 
 		result = append(result, info)
