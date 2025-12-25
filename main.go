@@ -27,7 +27,7 @@ import (
 
 // 版本信息
 var (
-	Version   = "6.0.1"
+	Version   = "6.0.3"
 	Commit    = "unknown"
 	BuildTime = "unknown"
 )
@@ -47,6 +47,11 @@ var assets embed.FS
 //
 //go:embed build/appicon.png
 var icon []byte
+
+// 嵌入 Windows 托盘图标
+//
+//go:embed build/windows/icon.ico
+var trayIconIco []byte
 
 // 嵌入默认配置文件
 //
@@ -82,6 +87,9 @@ func main() {
 		Height:    800,
 		MinWidth:  1024,
 		MinHeight: 600,
+
+		// Windows：点击关闭隐藏到托盘；仅在显式"退出"时真正退出（由 OnBeforeClose + 托盘菜单控制）
+		HideWindowOnClose: false,
 
 		// 资源服务器
 		AssetServer: &assetserver.Options{
@@ -125,6 +133,16 @@ func main() {
 			WebviewIsTransparent: false,
 			WindowIsTranslucent:  false,
 			DisableWindowIcon:    false,
+		},
+
+		// 单实例：当应用已隐藏到托盘时，再次启动会唤起主窗口
+		SingleInstanceLock: &options.SingleInstanceLock{
+			UniqueId: "cc-forwarder-desktop",
+			OnSecondInstanceLaunch: func(_ options.SecondInstanceData) {
+				if app != nil {
+					app.ShowMainWindow()
+				}
+			},
 		},
 	})
 

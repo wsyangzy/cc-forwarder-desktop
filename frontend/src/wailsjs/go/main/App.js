@@ -170,12 +170,20 @@ export function GetUsageSummary(arg1, arg2) {
   return window['go']['main']['App']['GetUsageSummary'](arg1, arg2);
 }
 
+export function HideMainWindow() {
+  return window['go']['main']['App']['HideMainWindow']();
+}
+
 export function IsProxyRunning() {
   return window['go']['main']['App']['IsProxyRunning']();
 }
 
 export function PauseGroup(arg1) {
   return window['go']['main']['App']['PauseGroup'](arg1);
+}
+
+export function RequestQuit() {
+  return window['go']['main']['App']['RequestQuit']();
 }
 
 export function ResetCategorySettings(arg1) {
@@ -200,6 +208,10 @@ export function SetEndpointFailoverEnabledByID(arg1, arg2) {
 
 export function SetEndpointPriority(arg1, arg2) {
   return window['go']['main']['App']['SetEndpointPriority'](arg1, arg2);
+}
+
+export function ShowMainWindow() {
+  return window['go']['main']['App']['ShowMainWindow']();
 }
 
 export function StartLogStream() {

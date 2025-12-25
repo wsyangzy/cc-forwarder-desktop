@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	goruntime "runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -28,6 +29,7 @@ import (
 	"cc-forwarder/internal/store"
 	"cc-forwarder/internal/tracking"
 	"cc-forwarder/internal/transport"
+	"cc-forwarder/internal/tray"
 	"cc-forwarder/internal/utils"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
@@ -84,6 +86,9 @@ type App struct {
 	// 日志处理器（用于查询和广播）
 	logHandler *logging.BroadcastHandler
 	logEmitter *logging.EventEmitter
+
+	// 托盘控制器（Windows）
+	trayController tray.Controller
 }
 
 // NewApp 创建新的应用实例
@@ -103,6 +108,9 @@ func (a *App) startup(ctx context.Context) {
 
 	// 2. 初始化日志
 	a.setupLogger()
+
+	// 2.5 初始化托盘（最小化到托盘/托盘菜单退出）
+	a.setupTray()
 
 	// 3. 显示启动信息
 	a.logger.Info("🚀 CC-Forwarder 桌面版启动中...",
@@ -197,8 +205,14 @@ func (a *App) shutdown(ctx context.Context) {
 	eventBus := a.eventBus
 	configWatcher := a.configWatcher
 	logEmitter := a.logEmitter
+	trayController := a.trayController
 	a.isRunning = false
 	a.mu.Unlock()
+
+	// 0. 关闭托盘
+	if trayController != nil {
+		trayController.Stop()
+	}
 
 	if logger != nil {
 		logger.Info("🛑 正在关闭 CC-Forwarder...")
@@ -287,16 +301,101 @@ func (a *App) domReady(ctx context.Context) {
 	a.emitSystemStatus()
 }
 
+// ShowMainWindow 显示主窗口（用于托盘菜单/单实例唤起）
+func (a *App) ShowMainWindow() {
+	a.mu.RLock()
+	ctx := a.ctx
+	a.mu.RUnlock()
+	if ctx == nil {
+		return
+	}
+	// 直接调用 Wails Runtime（不依赖 JS；窗口隐藏时也可用）
+	runtime.WindowShow(ctx)
+	runtime.WindowUnminimise(ctx)
+}
+
+// HideMainWindow 隐藏主窗口（用于托盘菜单）
+func (a *App) HideMainWindow() {
+	a.mu.RLock()
+	ctx := a.ctx
+	a.mu.RUnlock()
+	if ctx == nil {
+		return
+	}
+	// 直接调用 Wails Runtime（不依赖 JS）
+	runtime.WindowHide(ctx)
+}
+
+// setupTray 初始化系统托盘（Windows 生效；其它平台为 noop）
+func (a *App) setupTray() {
+	if goruntime.GOOS != "windows" {
+		return
+	}
+
+	a.mu.Lock()
+	if a.trayController != nil {
+		a.mu.Unlock()
+		return
+	}
+	ctx := a.ctx
+	a.mu.Unlock()
+
+	if ctx == nil {
+		return
+	}
+
+	controller, err := tray.Start(ctx, tray.Options{
+		Icon:    trayIconIco,
+		Tooltip: fmt.Sprintf("CC-Forwarder %s", Version),
+		OnShow:  a.ShowMainWindow,
+		OnQuit:  a.RequestQuit,
+	})
+	if err != nil {
+		if a.logger != nil {
+			a.logger.Warn("托盘初始化失败（将忽略最小化到托盘）", "error", err)
+		}
+		return
+	}
+
+	a.mu.Lock()
+	a.trayController = controller
+	a.mu.Unlock()
+}
+
+// RequestQuit 请求退出应用（托盘菜单“退出”使用）
+func (a *App) RequestQuit() {
+	a.mu.RLock()
+	ctx := a.ctx
+	a.mu.RUnlock()
+	if ctx == nil {
+		return
+	}
+	atomic.StoreInt32(&a.quitting, 1)
+	go runtime.Quit(ctx)
+}
+
 // beforeClose 在窗口关闭前调用，返回 true 阻止关闭
 func (a *App) beforeClose(ctx context.Context) bool {
-	// Windows 下用户“关闭窗口”应直接退出进程，避免遗留后台代理服务进程。
-	if !atomic.CompareAndSwapInt32(&a.quitting, 0, 1) {
+	// 非 Windows：保持默认"关闭即退出"
+	if goruntime.GOOS != "windows" {
 		return false
 	}
 
-	// 主动触发应用退出；返回 true 阻止默认关闭流程（由 Quit 统一收口到 OnShutdown）。
-	// 注意：Quit 可能触发同步回调，避免在 BeforeClose 回调里阻塞 UI 线程。
-	go runtime.Quit(ctx)
+	// 显式退出（托盘"退出"/应用主动 Quit）放行关闭
+	if atomic.LoadInt32(&a.quitting) == 1 {
+		return false
+	}
+
+	// 没有托盘能力时，不拦截关闭，避免用户无法退出
+	a.mu.RLock()
+	trayEnabled := a.trayController != nil
+	a.mu.RUnlock()
+	if !trayEnabled {
+		return false
+	}
+
+	// 用户点击 X：隐藏到托盘并阻止真正关闭（确保后台服务不停止）
+	runtime.WindowHide(ctx)
 	return true
 }
 

@@ -442,6 +442,53 @@
   - `frontend/src/utils/api.js`
   - `frontend/src/utils/wailsApi.js`
 
+### 7.15（working tree）feat(tray): Windows 最小化到系统托盘 + 单实例唤起
+- 做了什么：
+  - Windows 下提供系统托盘图标与右键菜单（显示/隐藏/退出）。
+  - 最小化窗口后自动隐藏到托盘，后台继续运行。
+  - 启用单实例锁：当应用已在托盘中运行时再次启动会唤起主窗口。
+  - 保持"关闭=退出"语义（不把关闭按钮改成隐藏）。
+- 怎么做（KISS）：
+  - 不引入第三方 systray 依赖，直接基于 Win32 `Shell_NotifyIconW` + 消息循环实现；非 Windows 平台为 noop。
+- 代表文件：
+  - `internal/tray/tray.go`
+  - `internal/tray/tray_windows.go`
+  - `internal/tray/tray_stub.go`
+  - `app.go`
+  - `main.go`
+
+### 7.16（working tree）refactor(tray): 替换为成熟的第三方托盘库 + 简化菜单
+- 背景问题：
+  - 自定义 Windows API 实现存在严重缺陷：托盘图标左右键点击完全无响应（消息循环未接收到事件）。
+  - Tooltip 显示正常，但用户无法通过托盘菜单恢复窗口或退出应用，导致用户"被困"。
+  - 窗口显示/隐藏使用 `runtime.WindowExecJS` 调用 JS，窗口隐藏后 JS runtime 不可用导致失败。
+- 做了什么：
+  - 引入成熟的第三方托盘库 `github.com/getlantern/systray` v1.2.2 替换自定义实现。
+  - 修复窗口显示/隐藏：直接调用 Wails Runtime API（`runtime.WindowShow/Hide/Unminimise`），不依赖 JS。
+  - 修复 `beforeClose` 逻辑：用户点击 X 时隐藏到托盘并返回 `true` 阻止退出（确保后台服务持续运行）。
+  - 简化托盘菜单：移除冗余的"隐藏主窗口"选项（用户直接点窗口 X 即可隐藏）。
+  - 移除轮询机制：删除 `watchMinimiseToTray` 和 `trayStopCh`，简化应用逻辑。
+- 怎么做（技术细节）：
+  - 新建 `internal/tray/tray_systray.go`：基于 `systray.Run` 实现托盘控制器，在单独 goroutine 中运行。
+  - 备份旧实现：`tray_windows.go` → `tray_windows.go.bak`。
+  - 更新 `tray_stub.go` build tag：从 `!windows` 改为 `stub`，避免与 systray 冲突。
+  - 简化 `setupTray()`：移除 `trayStopCh` 相关逻辑。
+  - 简化 `shutdown()`：直接调用 `trayController.Stop()`，由 systray 自动清理。
+  - 托盘菜单优化：保留"显示主窗口"和"退出"，移除"隐藏主窗口"（KISS 原则）。
+- 最终效果：
+  - ✅ Tooltip 正常显示（"CC-Forwarder {version}"）
+  - ✅ 右键菜单可靠响应（显示主窗口、退出）
+  - ✅ 点击窗口 X 隐藏到托盘，后台服务持续运行
+  - ✅ 托盘"退出"正常关闭应用
+  - ⚠️ 左键单击托盘图标无响应（systray 库设计限制，仅支持右键菜单）
+- 代表文件：
+  - `go.mod` / `go.sum`：新增 `github.com/getlantern/systray` 及其依赖
+  - `internal/tray/tray_systray.go`：新建（systray 实现）
+  - `internal/tray/tray_windows.go.bak`：备份（原自定义实现）
+  - `internal/tray/tray_stub.go`：更新 build tag
+  - `app.go`：简化 `setupTray()`、`shutdown()`、`beforeClose()`；移除 `watchMinimiseToTray()` 和 `trayStopCh` 字段
+  - `main.go`：更新注释说明托盘语义
+
 ---
 
 ## 8. 验证与回归（建议保留的命令）
